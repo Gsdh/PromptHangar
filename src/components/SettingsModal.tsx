@@ -213,7 +213,7 @@ export function SettingsModal({ onClose }: Props) {
               <div className="font-medium text-[var(--color-text)]">PromptHangar v0.1.0</div>
               <div>Created by Gores Hamad</div>
               <div>Fully local. Zero telemetry. Data stored via SQLite.</div>
-              <a href="https://github.com/YOUR_USERNAME/prompthangar" target="_blank" rel="noopener" className="text-[var(--color-accent)] hover:underline">GitHub</a>
+              <a href="https://github.com/Gsdh/PromptHangar" target="_blank" rel="noopener" className="text-[var(--color-accent)] hover:underline">GitHub</a>
             </div>
           </Section>
         </div>

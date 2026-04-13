@@ -167,8 +167,8 @@ The Playground auto-detects it. Your prompts stay on your machine.
 ```bash
 # Prerequisites: Node.js 20+, Rust 1.75+, pnpm 9+
 
-git clone https://github.com/YOUR_USERNAME/prompthangar.git
-cd prompthangar
+git clone https://github.com/Gsdh/PromptHangar.git
+cd PromptHangar
 pnpm install
 pnpm tauri dev      # Development with hot reload
 pnpm tauri build    # Production build
@@ -199,13 +199,13 @@ pnpm exec vitest run    # 33 unit tests
 
 ## Author
 
-**Gores Hamad** — [GitHub](https://github.com/YOUR_USERNAME)
+**Gores Hamad** — [GitHub](https://github.com/Gsdh)
 
 ---
 
 ## License
 
-MIT
+Proprietary — see [LICENSE](LICENSE)
 
 ---
 
