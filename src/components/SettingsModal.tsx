@@ -36,7 +36,7 @@ export function SettingsModal({ onClose }: Props) {
           </button>
         </div>
 
-        <div className="p-6 space-y-6">
+        <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
           {/* Mode */}
           <Section title="Mode" description="Choose your working environment.">
             <div className="flex gap-2 text-xs">
