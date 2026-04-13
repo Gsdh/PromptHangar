@@ -197,6 +197,12 @@ pnpm exec vitest run    # 33 unit tests
 
 ---
 
+## Author
+
+**Gores Hamad** — [GitHub](https://github.com/YOUR_USERNAME)
+
+---
+
 ## License
 
 MIT
@@ -204,6 +210,6 @@ MIT
 ---
 
 <p align="center">
-  Built with care for prompt engineers who value their privacy.<br>
+  Built by <strong>Gores Hamad</strong> for prompt engineers who value their privacy.<br>
   <strong>Your prompts. Your machine. Your data.</strong>
 </p>

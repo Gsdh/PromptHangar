@@ -210,9 +210,10 @@ export function SettingsModal({ onClose }: Props) {
           {/* About */}
           <Section title="About" description="">
             <div className="text-xs text-[var(--color-text-muted)] space-y-0.5">
-              <div>PromptHangar v0.1.0</div>
-              <div>Fully local. Zero telemetry.</div>
-              <div>Data stored via SQLite.</div>
+              <div className="font-medium text-[var(--color-text)]">PromptHangar v0.1.0</div>
+              <div>Created by Gores Hamad</div>
+              <div>Fully local. Zero telemetry. Data stored via SQLite.</div>
+              <a href="https://github.com/YOUR_USERNAME/prompthangar" target="_blank" rel="noopener" className="text-[var(--color-accent)] hover:underline">GitHub</a>
             </div>
           </Section>
         </div>
