@@ -1180,6 +1180,9 @@ pub fn create_ab_test(
     name: String,
     variant_revision_ids: Vec<String>,
 ) -> AppResult<String> {
+    if variant_revision_ids.is_empty() {
+        return Err(AppError::Invalid("A/B test requires at least one variant".into()));
+    }
     let conn = db.lock();
     let now = now_string();
     let test_id = Uuid::new_v4().to_string();

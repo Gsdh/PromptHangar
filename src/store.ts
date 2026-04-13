@@ -465,7 +465,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
                 savedAt: Date.now(),
               })
             );
-          } catch { /* localStorage full — ignore */ }
+          } catch (e) {
+            console.warn("[PromptHangar] Draft auto-save failed (localStorage may be full):", e);
+          }
         }, 500);
       }
       return next;

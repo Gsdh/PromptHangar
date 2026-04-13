@@ -176,7 +176,7 @@ fn seed_sample_data(pool: &DbPool) -> AppResult<()> {
     )?;
 
     conn.execute(
-        "UPDATE app_settings SET value = 'true' WHERE key = 'first_run_completed'",
+        "UPDATE app_settings SET value = json('true') WHERE key = 'first_run_completed'",
         [],
     )?;
 

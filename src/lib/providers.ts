@@ -587,11 +587,13 @@ async function runOpenAICompat(
   const decoder = new TextDecoder();
   let totalTokens = 0;
   let buf = "";
+  const MAX_BUF = 1_000_000;
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     buf += decoder.decode(value, { stream: true });
+    if (buf.length > MAX_BUF) { opts.onError("Stream buffer exceeded 1MB"); reader.cancel(); return; }
     const lines = buf.split("\n");
     buf = lines.pop() ?? "";
     for (const line of lines) {
@@ -666,11 +668,13 @@ async function runAnthropic(
   let inputTokens = 0;
   let outputTokens = 0;
   let buf = "";
+  const MAX_BUF = 1_000_000;
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     buf += decoder.decode(value, { stream: true });
+    if (buf.length > MAX_BUF) { opts.onError("Stream buffer exceeded 1MB"); reader.cancel(); return; }
     const lines = buf.split("\n");
     buf = lines.pop() ?? "";
     for (const line of lines) {
@@ -753,11 +757,13 @@ async function runGemini(
   let totalTokens = 0;
   let promptTokens = 0;
   let buf = "";
+  const MAX_BUF = 1_000_000;
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     buf += decoder.decode(value, { stream: true });
+    if (buf.length > MAX_BUF) { opts.onError("Stream buffer exceeded 1MB"); reader.cancel(); return; }
     const lines = buf.split("\n");
     buf = lines.pop() ?? "";
     for (const line of lines) {
