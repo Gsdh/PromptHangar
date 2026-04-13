@@ -300,7 +300,7 @@ const PROVIDERS: Record<ProviderType, ProviderConfig> = {
 
 import { invoke } from "@tauri-apps/api/core";
 
-const KEYCHAIN_SERVICE = "com.promptnotetaker.apikeys";
+const KEYCHAIN_SERVICE = "com.prompthangar.apikeys";
 
 // Cache keys in memory to avoid async lookups on every render
 const keyCache = new Map<string, string>();

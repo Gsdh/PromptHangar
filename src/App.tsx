@@ -136,7 +136,7 @@ function App() {
             <div style={{ color: "#ff6b6b", fontWeight: 700, marginBottom: 8 }}>Bootstrap failed</div>
             <pre style={{ whiteSpace: "pre-wrap", fontSize: 12, color: "#ccc", background: "#222", padding: 12, borderRadius: 8 }}>{bootError}</pre>
             <div style={{ marginTop: 12, color: "#666", fontSize: 11 }}>
-              Try resetting the database by deleting the file in ~/Library/Application Support/com.promptnotetaker.app/ and restarting the app.
+              Try resetting the database by deleting the file in ~/Library/Application Support/com.prompthangar.app/ and restarting the app.
             </div>
           </div>
         ) : (
@@ -176,7 +176,7 @@ function App() {
           </button>
           <div className="w-px h-4 bg-[var(--color-border)]" />
           <BookOpen size={16} className="text-[var(--color-accent)]" />
-          <span className="font-semibold text-sm">Prompt Notetaker</span>
+          <span className="font-semibold text-sm">PromptHangar</span>
           <span className="text-[10px] px-1.5 py-0.5 bg-[var(--color-bg-subtle)] rounded text-[var(--color-text-muted)] uppercase">
             {settings.mode}
           </span>

@@ -210,7 +210,7 @@ export function SettingsModal({ onClose }: Props) {
           {/* About */}
           <Section title="About" description="">
             <div className="text-xs text-[var(--color-text-muted)] space-y-0.5">
-              <div>Prompt Notetaker v0.1.0</div>
+              <div>PromptHangar v0.1.0</div>
               <div>Fully local. Zero telemetry.</div>
               <div>Data stored via SQLite.</div>
             </div>

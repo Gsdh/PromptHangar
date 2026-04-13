@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="src-tauri/icons/icon.svg" width="128" height="128" alt="Prompt Notetaker" />
+  <img src="src-tauri/icons/icon.svg" width="128" height="128" alt="PromptHangar" />
 </p>
 
-<h1 align="center">Prompt Notetaker</h1>
+<h1 align="center">PromptHangar</h1>
 
 <p align="center">
   <strong>The privacy-first prompt engineering workbench.</strong><br>
@@ -40,7 +40,7 @@ Every prompt engineer has the same problem: prompts scattered across ChatGPT con
 
 **PromptLayer costs $49/month. LangSmith charges per seat. Both require sending every prompt to their cloud.**
 
-Prompt Notetaker is the alternative:
+PromptHangar is the alternative:
 
 - **Free forever** — no subscription, no limits, no account
 - **Fully offline** — works without internet, even on a plane
@@ -146,7 +146,7 @@ The Playground auto-detects it. Your prompts stay on your machine.
 
 ## Comparison
 
-| | Prompt Notetaker | PromptLayer | LangSmith | PromptHub |
+| | PromptHangar | PromptLayer | LangSmith | PromptHub |
 |---|---|---|---|---|
 | Price | **Free** | $49/mo | $39/seat/mo | $15/user/mo |
 | Offline | **Yes** | No | No | No |
@@ -167,8 +167,8 @@ The Playground auto-detects it. Your prompts stay on your machine.
 ```bash
 # Prerequisites: Node.js 20+, Rust 1.75+, pnpm 9+
 
-git clone https://github.com/YOUR_USERNAME/prompt-notetaker.git
-cd prompt-notetaker
+git clone https://github.com/YOUR_USERNAME/prompthangar.git
+cd prompthangar
 pnpm install
 pnpm tauri dev      # Development with hot reload
 pnpm tauri build    # Production build

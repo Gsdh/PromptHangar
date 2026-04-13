@@ -131,7 +131,7 @@ fn seed_sample_data(pool: &DbPool) -> AppResult<()> {
     insert_sample_prompt(
         &conn,
         &welcome_id,
-        "Welcome to Prompt Notetaker",
+        "Welcome to PromptHangar",
         Some("Read this first — a quick tour of the app."),
         "This is your first prompt. Once you edit this text and click Save, \
          a new revision is created automatically. Click an earlier revision \

@@ -31,7 +31,7 @@ export function FirstRunModal({ onComplete }: { onComplete?: () => void } = {}) 
     <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-6">
       <div className="glass-panel max-w-2xl w-full p-8">
         <h1 className="text-2xl font-semibold mb-1">
-          Welcome to Prompt Notetaker
+          Welcome to PromptHangar
         </h1>
         <p className="text-sm text-[var(--color-text-muted)] mb-6">
           Before you begin — which mode do you want to work in? You can always

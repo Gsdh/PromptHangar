@@ -250,7 +250,7 @@ export function HelpGuide({ onClose }: Props) {
             </ul>
           </div>
           <div className="px-6 py-3 border-t border-[var(--color-border)] flex items-center justify-between text-[10px] text-[var(--color-text-muted)]">
-            <span className="flex items-center gap-1"><Lock size={9} /> Prompt Notetaker v0.1.0 — All data stored locally</span>
+            <span className="flex items-center gap-1"><Lock size={9} /> PromptHangar v0.1.0 — All data stored locally</span>
             <span>{activeSection + 1} / {SECTIONS.length}</span>
           </div>
         </div>

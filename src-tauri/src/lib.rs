@@ -8,12 +8,12 @@ use directories::ProjectDirs;
 use std::path::PathBuf;
 
 fn resolve_db_path() -> PathBuf {
-    if let Some(dirs) = ProjectDirs::from("com", "promptnotetaker", "app") {
+    if let Some(dirs) = ProjectDirs::from("com", "prompthangar", "app") {
         return dirs.data_dir().join("data.db");
     }
     // Fallback: home dir
     let mut p = std::env::var("HOME").map(PathBuf::from).unwrap_or_default();
-    p.push(".prompt-notetaker");
+    p.push(".prompthangar");
     p.push("data.db");
     p
 }

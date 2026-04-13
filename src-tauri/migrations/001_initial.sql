@@ -1,4 +1,4 @@
--- Prompt Notetaker — initial schema (v0.1)
+-- PromptHangar — initial schema (v0.1)
 
 CREATE TABLE folders (
     id TEXT PRIMARY KEY,

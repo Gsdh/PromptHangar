@@ -162,7 +162,7 @@ export function OnboardingTour({ onClose }: Props) {
               }}
               className="flex items-center gap-1 px-4 py-1.5 bg-[var(--color-accent)] text-white rounded text-xs font-medium hover:brightness-110"
             >
-              {isLast ? "Start using Prompt Notetaker" : "Next"}
+              {isLast ? "Start using PromptHangar" : "Next"}
               {!isLast && <ArrowRight size={10} />}
             </button>
           </div>
