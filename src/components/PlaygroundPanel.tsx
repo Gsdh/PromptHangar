@@ -35,14 +35,12 @@ export function PlaygroundPanel() {
     try {
       const found = await discoverModels();
       setModels(found);
-      if (found.length > 0 && !selectedModel) {
-        setSelectedModel(found[0]);
-      }
+      setSelectedModel((prev) => (prev ? prev : found[0] ?? null));
     } catch {
       // Discovery failed silently
     }
     setDiscovering(false);
-  }, [selectedModel]);
+  }, []);
 
   useEffect(() => {
     discover();
@@ -51,7 +49,9 @@ export function PlaygroundPanel() {
   if (!activePrompt) return null;
 
   async function handleRun() {
-    if (!selectedModel || running || !draftContent.trim()) return;
+    if (!selectedModel || running || !draftContent.trim() || !activePrompt) return;
+    const promptId = activePrompt.prompt.id;
+    const revisionId = activePrompt.latest_revision?.id ?? null;
     setRunning(true);
     setStreamContent("");
     setStats(null);
@@ -103,8 +103,8 @@ export function PlaygroundPanel() {
             }
             // Save trace for observability
             await api.saveTrace({
-              prompt_id: activePrompt?.prompt.id,
-              revision_id: activePrompt?.latest_revision?.id,
+              prompt_id: promptId,
+              revision_id: revisionId,
               provider: selectedModel.provider,
               model: selectedModel.id,
               input_messages: JSON.stringify(messages),
