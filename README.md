@@ -42,7 +42,7 @@ Every prompt engineer has the same problem: prompts scattered across ChatGPT con
 
 PromptHangar is the alternative:
 
-- **Free forever** — no subscription, no limits, no account
+- **Free** — no subscription, no limits, no account
 - **Fully offline** — works without internet, even on a plane
 - **Privacy by architecture** — SQLite database on your disk, zero telemetry, API keys in your OS keychain
 - **15 LLM providers** — test the same prompt on Ollama, GPT-5.4, Claude 4.6, Gemini 3.1, Grok, Mistral, DeepSeek, and more
