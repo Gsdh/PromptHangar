@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# Environment / secrets
+.env
+.env.*
+
 # Tauri build artifacts
 src-tauri/target/
 src-tauri/gen/
