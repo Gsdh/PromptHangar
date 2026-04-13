@@ -1,58 +1,96 @@
 use crate::db::DbPool;
-use crate::error::AppError;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Request, State},
+    middleware::{self, Next},
+    response::Response,
     routing::get,
     Json, Router,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
+use uuid::Uuid;
 
-pub fn start_server(pool: DbPool) {
+#[derive(Clone)]
+struct ServerState {
+    pool: DbPool,
+    token: Arc<String>,
+}
+
+/// Auth middleware — rejects requests without a valid Bearer token.
+async fn require_token(
+    State(state): State<ServerState>,
+    req: Request,
+    next: Next,
+) -> Result<Response, axum::http::StatusCode> {
+    let header = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if header == format!("Bearer {}", state.token.as_str()) {
+        Ok(next.run(req).await)
+    } else {
+        Err(axum::http::StatusCode::UNAUTHORIZED)
+    }
+}
+
+pub fn start_server(pool: DbPool) -> String {
+    let token = Uuid::new_v4().to_string();
+    let token_for_caller = token.clone();
+
+    let state = ServerState {
+        pool,
+        token: Arc::new(token),
+    };
+
     tauri::async_runtime::spawn(async move {
-        // Build our application with a route
         let app = Router::new()
             .route("/v1/prompts/{id}", get(get_latest_prompt))
-            .with_state(pool);
+            .route_layer(middleware::from_fn_with_state(state.clone(), require_token))
+            .with_state(state);
 
-        // Run it
         let addr = SocketAddr::from(([127, 0, 0, 1], 31337));
-        println!("Local Prompt-as-a-Service listening on {}", addr);
+        println!("Local Prompt-as-a-Service listening on {addr}");
         match tokio::net::TcpListener::bind(&addr).await {
             Ok(listener) => {
                 if let Err(e) = axum::serve(listener, app).await {
-                    eprintln!("API server error: {}", e);
+                    eprintln!("API server error: {e}");
                 }
             }
             Err(e) => {
-                eprintln!("Failed to bind to port 31337: {}", e);
+                eprintln!("Failed to bind to port 31337: {e}");
             }
         }
     });
+
+    token_for_caller
 }
 
 async fn get_latest_prompt(
-    State(pool): State<DbPool>,
+    State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
-    // Note: Because DbPool uses a synchronous Mutex, we should use spawn_blocking or quickly access it.
-    // For local dev with minimal contention, brief lock is okay, but spawn_blocking is safer in async over rusqlite.
-    let pool_clone = pool.clone();
+    let pool_clone = state.pool.clone();
 
     tokio::task::spawn_blocking(move || {
         let conn = pool_clone.lock();
-        
-        let prompt_exists: i64 = conn.query_row(
-            "SELECT count(*) FROM prompts WHERE id = ?1",
-            rusqlite::params![&id],
-            |row| row.get(0)
-        ).unwrap_or(0);
+
+        let prompt_exists: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM prompts WHERE id = ?1",
+                rusqlite::params![&id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
 
         if prompt_exists == 0 {
             return Err(axum::http::StatusCode::NOT_FOUND);
         }
 
-        let row: std::result::Result<(String, Option<String>, Option<String>, String), rusqlite::Error> = conn.query_row(
+        let row: std::result::Result<
+            (String, Option<String>, Option<String>, String),
+            rusqlite::Error,
+        > = conn.query_row(
             "SELECT content, system_prompt, model, params
              FROM revisions
              WHERE prompt_id = ?1
@@ -63,7 +101,8 @@ async fn get_latest_prompt(
 
         match row {
             Ok((content, system_prompt, model, params_str)) => {
-                let params: serde_json::Value = serde_json::from_str(&params_str).unwrap_or_else(|_| serde_json::json!({}));
+                let params: serde_json::Value =
+                    serde_json::from_str(&params_str).unwrap_or_else(|_| serde_json::json!({}));
                 let response = serde_json::json!({
                     "prompt_id": id,
                     "content": content,
@@ -73,7 +112,6 @@ async fn get_latest_prompt(
                 });
                 Ok(Json(response))
             }
-            // Prompt exists but has no revisions yet
             Err(_) => {
                 let response = serde_json::json!({
                     "prompt_id": id,

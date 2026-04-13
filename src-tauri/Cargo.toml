@@ -30,5 +30,6 @@ anyhow = "1"
 thiserror = "2"
 directories = "5"
 parking_lot = "0.12"
+rfd = "0.15"
 axum = "0.8.8"
 tokio = { version = "1.51.1", features = ["full", "rt-multi-thread"] }

@@ -21,7 +21,22 @@ fn resolve_db_path() -> PathBuf {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let db_path = resolve_db_path();
-    let pool = db::init(&db_path).expect("failed to initialise database");
+    let pool = match db::init(&db_path) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Database initialisation failed: {e}");
+            // Try to show a native dialog before exiting
+            rfd::MessageDialog::new()
+                .set_title("PromptHangar — startup error")
+                .set_description(&format!(
+                    "Could not open the database at:\n{}\n\nError: {e}\n\nThe file may be corrupted or the folder is not writable.",
+                    db_path.display()
+                ))
+                .set_level(rfd::MessageLevel::Error)
+                .show();
+            std::process::exit(1);
+        }
+    };
 
     let pool_for_server = pool.clone();
 
@@ -102,5 +117,8 @@ pub fn run() {
             commands::update_settings,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| {
+            eprintln!("Tauri application error: {e}");
+            std::process::exit(1);
+        });
 }

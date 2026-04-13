@@ -319,6 +319,7 @@ export async function setApiKey(provider: ProviderType, key: string) {
     } catch {
       // Fallback to localStorage if keychain fails (e.g. Linux without libsecret)
       localStorage.setItem(`pn:apikey:${provider}`, key.trim());
+      console.warn(`[PromptHangar] OS keychain unavailable — API key for ${provider} stored in localStorage (less secure). Install libsecret on Linux for encrypted storage.`);
     }
   } else {
     keyCache.delete(provider);
