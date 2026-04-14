@@ -1541,6 +1541,21 @@ pub fn export_prompt_to_file(db: State<DbPool>, input: ExportInput) -> AppResult
     Ok(())
 }
 
+#[derive(Debug, Deserialize)]
+pub struct WriteTextFileInput {
+    pub path: String,
+    pub content: String,
+}
+
+/// Write arbitrary text content to a user-chosen path. Used by client-side
+/// exporters (e.g. Results export) that format content in TypeScript and only
+/// need a writer.
+#[tauri::command]
+pub fn write_text_file(input: WriteTextFileInput) -> AppResult<()> {
+    std::fs::write(&input.path, input.content)?;
+    Ok(())
+}
+
 // ---------- Reorder (drag-drop) ----------
 
 #[derive(Debug, Deserialize)]

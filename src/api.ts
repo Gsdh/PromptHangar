@@ -329,6 +329,10 @@ export function exportPromptToFile(input: {
   return invoke("export_prompt_to_file", { input });
 }
 
+export function writeTextFile(path: string, content: string): Promise<void> {
+  return invoke("write_text_file", { input: { path, content } });
+}
+
 // ---------- Reorder (DnD) ----------
 
 export function reorderFolders(

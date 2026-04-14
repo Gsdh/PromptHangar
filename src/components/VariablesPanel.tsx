@@ -51,7 +51,17 @@ export function VariablesPanel({ content, systemPrompt }: Props) {
     });
   }, [variables.join(",")]);
 
-  if (variables.length === 0) return null;
+  if (variables.length === 0) {
+    return (
+      <div className="px-5 py-6 text-center text-xs text-[var(--color-text-muted)]">
+        <Variable size={20} className="mx-auto mb-2 opacity-40" />
+        <div className="font-medium mb-1">No variables detected</div>
+        <div>
+          Use <code className="px-1.5 py-0.5 bg-[var(--color-bg-subtle)] border border-[var(--color-border)] rounded text-[10px] font-mono">{"{{variable}}"}</code> in your prompt to create fill-in fields.
+        </div>
+      </div>
+    );
+  }
 
   const allFilled = variables.every((v) => values[v]?.trim());
   const expanded = expandTemplate(content, values);

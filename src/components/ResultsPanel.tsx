@@ -8,10 +8,18 @@ import {
   ChevronDown,
   ChevronUp,
   AlertTriangle,
+  Download,
+  FileJson,
+  FileText,
+  Table,
 } from "lucide-react";
 import clsx from "clsx";
+import { save } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../store";
-import type { RevisionOutput } from "../types";
+import { writeTextFile } from "../api";
+import type { RevisionOutput, Revision, PromptWithLatest } from "../types";
+import { FloatingMenu } from "./FloatingMenu";
+import { toast } from "./Toast";
 
 function extractHtml(content: string): string | null {
   const codeBlockMatch = content.match(/```html\n([\s\S]*?)```/);
@@ -80,6 +88,13 @@ export function ResultsPanel() {
         )}
 
         <div className="ml-auto flex items-center gap-1">
+          {outputs.length > 0 && (
+            <ResultsExportButton
+              activePrompt={activePrompt}
+              revision={targetRevision}
+              outputs={outputs}
+            />
+          )}
           {outputs.length >= 2 && !collapsed && (
             <button
               type="button"
@@ -329,6 +344,252 @@ function RatingStars({
       ))}
     </div>
   );
+}
+
+// ---------- Export ----------
+
+function ResultsExportButton({
+  activePrompt,
+  revision,
+  outputs,
+}: {
+  activePrompt: PromptWithLatest;
+  revision: Revision;
+  outputs: RevisionOutput[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [status, setStatus] = useState<"idle" | "saving" | "done">("idle");
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  async function doExport(format: "markdown" | "json" | "csv") {
+    const ext = format === "markdown" ? "md" : format === "json" ? "json" : "csv";
+    const sanitized = activePrompt.prompt.title
+      .replace(/[^a-zA-Z0-9_\-\s]/g, "")
+      .replace(/\s+/g, "_")
+      .slice(0, 48);
+    const defaultName = `${sanitized}_rev${revision.revision_number}_results.${ext}`;
+
+    try {
+      const path = await save({
+        defaultPath: defaultName,
+        filters: [
+          format === "markdown"
+            ? { name: "Markdown", extensions: ["md"] }
+            : format === "json"
+              ? { name: "JSON", extensions: ["json"] }
+              : { name: "CSV", extensions: ["csv"] },
+        ],
+      });
+      if (!path) return;
+
+      setStatus("saving");
+      setOpen(false);
+      const content =
+        format === "markdown"
+          ? formatResultsMarkdown(activePrompt, revision, outputs)
+          : format === "json"
+            ? formatResultsJson(activePrompt, revision, outputs)
+            : formatResultsCsv(outputs);
+      await writeTextFile(path, content);
+      setStatus("done");
+      toast(`Exported ${outputs.length} result${outputs.length === 1 ? "" : "s"}`, "success");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch (err) {
+      setStatus("idle");
+      toast("Export failed: " + String(err), "error");
+    }
+  }
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1 px-2 py-1 text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)] rounded font-medium"
+        title="Export results"
+      >
+        <Download size={10} />
+        {status === "saving" ? "…" : "Export"}
+      </button>
+
+      <FloatingMenu
+        open={open}
+        anchorRef={btnRef}
+        placement="bottom-end"
+        onClose={() => setOpen(false)}
+        className="py-1 min-w-[220px] text-sm"
+      >
+        <button
+          type="button"
+          onClick={() => void doExport("markdown")}
+          className="w-full text-left px-3 py-1.5 flex items-center gap-2 text-xs hover:bg-[var(--color-bg-subtle)]"
+        >
+          <FileText size={12} className="text-[var(--color-text-muted)] shrink-0" />
+          <div>
+            <div className="font-medium">Markdown</div>
+            <div className="text-[10px] text-[var(--color-text-muted)]">
+              Readable report with prompt + results
+            </div>
+          </div>
+        </button>
+        <button
+          type="button"
+          onClick={() => void doExport("json")}
+          className="w-full text-left px-3 py-1.5 flex items-center gap-2 text-xs hover:bg-[var(--color-bg-subtle)]"
+        >
+          <FileJson size={12} className="text-[var(--color-text-muted)] shrink-0" />
+          <div>
+            <div className="font-medium">JSON</div>
+            <div className="text-[10px] text-[var(--color-text-muted)]">
+              Structured data — ratings, notes, labels
+            </div>
+          </div>
+        </button>
+        <button
+          type="button"
+          onClick={() => void doExport("csv")}
+          className="w-full text-left px-3 py-1.5 flex items-center gap-2 text-xs hover:bg-[var(--color-bg-subtle)]"
+        >
+          <Table size={12} className="text-[var(--color-text-muted)] shrink-0" />
+          <div>
+            <div className="font-medium">CSV</div>
+            <div className="text-[10px] text-[var(--color-text-muted)]">
+              One row per result — open in Excel / Sheets
+            </div>
+          </div>
+        </button>
+      </FloatingMenu>
+    </>
+  );
+}
+
+function formatRatingStars(rating: number | null | undefined): string {
+  if (!rating) return "";
+  const filled = "★".repeat(rating);
+  const empty = "☆".repeat(5 - rating);
+  return filled + empty;
+}
+
+function formatResultsMarkdown(
+  activePrompt: PromptWithLatest,
+  revision: Revision,
+  outputs: RevisionOutput[]
+): string {
+  const lines: string[] = [];
+  lines.push(`# Results — ${activePrompt.prompt.title}`);
+  lines.push("");
+  if (activePrompt.prompt.description) {
+    lines.push(`_${activePrompt.prompt.description}_`);
+    lines.push("");
+  }
+
+  // Metadata block
+  lines.push(`**Revision:** #${revision.revision_number}`);
+  lines.push(`**Saved:** ${new Date(revision.created_at).toLocaleString()}`);
+  if (revision.model) lines.push(`**Model:** \`${revision.model}\``);
+  if (revision.note) lines.push(`**Commit note:** _${revision.note}_`);
+  lines.push(`**Results:** ${outputs.length}`);
+  lines.push("");
+  lines.push("---");
+  lines.push("");
+
+  // The prompt itself (for context)
+  if (revision.system_prompt) {
+    lines.push("## System prompt");
+    lines.push("");
+    lines.push("```");
+    lines.push(revision.system_prompt);
+    lines.push("```");
+    lines.push("");
+  }
+  lines.push("## Prompt");
+  lines.push("");
+  lines.push(revision.content);
+  lines.push("");
+  lines.push("---");
+  lines.push("");
+
+  // Each result
+  outputs.forEach((out, i) => {
+    const label = out.label || `Result ${i + 1}`;
+    const stars = formatRatingStars(out.rating);
+    lines.push(`## ${label}${stars ? ` — ${stars}` : ""}`);
+    lines.push("");
+    if (out.notes) {
+      lines.push(`> ${out.notes}`);
+      lines.push("");
+    }
+    lines.push(out.content);
+    lines.push("");
+    if (i < outputs.length - 1) {
+      lines.push("---");
+      lines.push("");
+    }
+  });
+
+  return lines.join("\n");
+}
+
+function formatResultsJson(
+  activePrompt: PromptWithLatest,
+  revision: Revision,
+  outputs: RevisionOutput[]
+): string {
+  return JSON.stringify(
+    {
+      exported_at: new Date().toISOString(),
+      prompt: {
+        id: activePrompt.prompt.id,
+        title: activePrompt.prompt.title,
+        description: activePrompt.prompt.description ?? null,
+        tags: activePrompt.tags,
+      },
+      revision: {
+        id: revision.id,
+        revision_number: revision.revision_number,
+        created_at: revision.created_at,
+        model: revision.model,
+        system_prompt: revision.system_prompt,
+        content: revision.content,
+        note: revision.note,
+      },
+      results: outputs.map((o) => ({
+        id: o.id,
+        label: o.label,
+        rating: o.rating,
+        notes: o.notes,
+        content: o.content,
+        created_at: o.created_at,
+      })),
+    },
+    null,
+    2
+  );
+}
+
+function csvEscape(s: string | null | undefined): string {
+  if (s == null) return "";
+  const str = String(s);
+  // RFC 4180: wrap in quotes, escape " as ""
+  if (/[",\n\r]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+function formatResultsCsv(outputs: RevisionOutput[]): string {
+  const header = ["Label", "Rating", "Notes", "Content", "Created"].join(",");
+  const rows = outputs.map((o) =>
+    [
+      csvEscape(o.label),
+      o.rating ?? "",
+      csvEscape(o.notes),
+      csvEscape(o.content),
+      o.created_at,
+    ].join(",")
+  );
+  return [header, ...rows].join("\n");
 }
 
 function PreviewRenderer({ content, compact }: { content: string, compact: boolean }) {

@@ -92,7 +92,7 @@ export function RevisionTimeline() {
   if (!activePrompt) return null;
 
   return (
-    <div className="h-full flex flex-col border-l border-[var(--color-border)]">
+    <div className="h-full flex flex-col">
       {/* Environment badges */}
       {environments.length > 0 && (
         <div className="px-3 py-1.5 border-b border-[var(--color-border)] flex flex-wrap gap-1">

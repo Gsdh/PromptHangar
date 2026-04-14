@@ -62,7 +62,7 @@ export interface SearchHit {
 }
 
 export type AppMode = "basic" | "advanced" | "engineer" | "custom";
-export type Theme = "light" | "dark";
+export type Theme = "light" | "dark" | "oled";
 
 export interface CustomFeatures {
   showVariables: boolean;

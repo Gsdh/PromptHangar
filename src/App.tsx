@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import clsx from "clsx";
-import { Settings as SettingsIcon, BookOpen, Download, BarChart3, Lock, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Link2, FlaskConical, Activity, HelpCircle } from "lucide-react";
+import { Settings as SettingsIcon, BookOpen, Download, BarChart3, Lock, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Link2, FlaskConical, Activity, HelpCircle, History } from "lucide-react";
 import { useAppStore } from "./store";
 import { FolderTree } from "./components/FolderTree";
 import { DndPromptList } from "./components/DndPromptList";
@@ -18,6 +18,7 @@ import { ABTestModal } from "./components/ABTestModal";
 import { TracingViewer } from "./components/TracingViewer";
 import { HelpGuide } from "./components/HelpGuide";
 import { ToastContainer } from "./components/Toast";
+import { ResizeHandle } from "./components/ResizeHandle";
 
 function App() {
   const bootstrap = useAppStore((s) => s.bootstrap);
@@ -46,13 +47,34 @@ function App() {
   const [tracingOpen, setTracingOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
-  // Collapsible sidebars — persisted in localStorage
+  // Collapsible + resizable sidebars — persisted in localStorage
+  const FOLDER_DEFAULT_W = 224;
+  const PROMPTS_DEFAULT_W = 256;
+  const TIMELINE_DEFAULT_W = 224;
+  const SIDEBAR_MIN_W = 140;
+  const SIDEBAR_MAX_W = 400;
+  const COLLAPSE_THRESHOLD = 60; // drag below this → collapse
+
   const [foldersCollapsed, setFoldersCollapsed] = useState(
     () => localStorage.getItem("pn:foldersCollapsed") === "true"
   );
   const [promptsCollapsed, setPromptsCollapsed] = useState(
     () => localStorage.getItem("pn:promptsCollapsed") === "true"
   );
+  const [timelineCollapsed, setTimelineCollapsed] = useState(
+    () => localStorage.getItem("pn:timelineCollapsed") === "true"
+  );
+  const [foldersWidth, setFoldersWidth] = useState(
+    () => Number(localStorage.getItem("pn:foldersWidth")) || FOLDER_DEFAULT_W
+  );
+  const [promptsWidth, setPromptsWidth] = useState(
+    () => Number(localStorage.getItem("pn:promptsWidth")) || PROMPTS_DEFAULT_W
+  );
+  const [timelineWidth, setTimelineWidth] = useState(
+    () => Number(localStorage.getItem("pn:timelineWidth")) || TIMELINE_DEFAULT_W
+  );
+  const dragRef = useRef<{ side: "folders" | "prompts" | "timeline"; startX: number; startW: number } | null>(null);
+
   function toggleFolders() {
     setFoldersCollapsed((c) => {
       localStorage.setItem("pn:foldersCollapsed", String(!c));
@@ -65,6 +87,76 @@ function App() {
       return !c;
     });
   }
+  function toggleTimeline() {
+    setTimelineCollapsed((c) => {
+      localStorage.setItem("pn:timelineCollapsed", String(!c));
+      return !c;
+    });
+  }
+
+  // When all three panes are collapsed, flip to side-panel layout so the
+  // bottom panel moves to the right of the editor instead of below it.
+  const sidePanelMode = foldersCollapsed && promptsCollapsed && timelineCollapsed;
+
+  const handleSidebarDrag = useCallback((side: "folders" | "prompts" | "timeline", e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = side === "folders" ? foldersWidth : side === "prompts" ? promptsWidth : timelineWidth;
+    // Timeline grows LEFTWARD — drag left = wider, drag right = narrower.
+    const invert = side === "timeline";
+    dragRef.current = { side, startX, startW };
+
+    function onMove(ev: MouseEvent) {
+      if (!dragRef.current) return;
+      const rawDelta = ev.clientX - dragRef.current.startX;
+      const delta = invert ? -rawDelta : rawDelta;
+      const newW = Math.max(0, dragRef.current.startW + delta);
+
+      if (newW < COLLAPSE_THRESHOLD) {
+        if (dragRef.current.side === "folders") {
+          setFoldersCollapsed(true);
+          localStorage.setItem("pn:foldersCollapsed", "true");
+        } else if (dragRef.current.side === "prompts") {
+          setPromptsCollapsed(true);
+          localStorage.setItem("pn:promptsCollapsed", "true");
+        } else {
+          setTimelineCollapsed(true);
+          localStorage.setItem("pn:timelineCollapsed", "true");
+        }
+      } else {
+        const clamped = Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, newW));
+        if (dragRef.current.side === "folders") {
+          setFoldersCollapsed(false);
+          localStorage.setItem("pn:foldersCollapsed", "false");
+          setFoldersWidth(clamped);
+          localStorage.setItem("pn:foldersWidth", String(clamped));
+        } else if (dragRef.current.side === "prompts") {
+          setPromptsCollapsed(false);
+          localStorage.setItem("pn:promptsCollapsed", "false");
+          setPromptsWidth(clamped);
+          localStorage.setItem("pn:promptsWidth", String(clamped));
+        } else {
+          setTimelineCollapsed(false);
+          localStorage.setItem("pn:timelineCollapsed", "false");
+          setTimelineWidth(clamped);
+          localStorage.setItem("pn:timelineWidth", String(clamped));
+        }
+      }
+    }
+
+    function onUp() {
+      dragRef.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    }
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [foldersWidth, promptsWidth, timelineWidth]);
 
   const [bootError, setBootError] = useState<string | null>(null);
 
@@ -174,6 +266,19 @@ function App() {
           >
             {promptsCollapsed ? <PanelRightOpen size={14} /> : <PanelRightClose size={14} />}
           </button>
+          <button
+            type="button"
+            onClick={toggleTimeline}
+            className={clsx(
+              "p-1.5 rounded hover:bg-[var(--color-bg-subtle)] transition-colors",
+              timelineCollapsed
+                ? "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                : "text-[var(--color-accent)]"
+            )}
+            title={timelineCollapsed ? "Show revision timeline" : "Hide revision timeline"}
+          >
+            <History size={14} />
+          </button>
           <div className="w-px h-4 bg-[var(--color-border)]" />
           <BookOpen size={16} className="text-[var(--color-accent)]" />
           <span className="font-semibold text-sm">PromptHangar</span>
@@ -221,10 +326,10 @@ function App() {
 
       {/* Main layout */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Folder tree — collapsible */}
+        {/* Folder tree — collapsible + resizable */}
         <div
-          className={clsx("bg-[var(--color-bg-elevated)] border-r border-[var(--color-border)] transition-all duration-200 overflow-hidden shrink-0", foldersCollapsed && "sidebar-auto-hide")}
-          style={{ width: foldersCollapsed ? 0 : 224 }}
+          className={clsx("bg-[var(--color-bg-elevated)] overflow-hidden shrink-0 relative", foldersCollapsed && "sidebar-auto-hide")}
+          style={{ width: foldersCollapsed ? 0 : foldersWidth }}
         >
           {!foldersCollapsed && (
             <FolderTree
@@ -234,11 +339,18 @@ function App() {
             />
           )}
         </div>
+        {/* Folders drag handle */}
+        {!foldersCollapsed && (
+          <ResizeHandle
+            onMouseDown={(e) => handleSidebarDrag("folders", e)}
+            onDoubleClick={toggleFolders}
+          />
+        )}
 
-        {/* Prompt list — collapsible */}
+        {/* Prompt list — collapsible + resizable */}
         <div
-          className="bg-[var(--color-bg-elevated)] transition-all duration-200 overflow-hidden shrink-0"
-          style={{ width: promptsCollapsed ? 0 : 256 }}
+          className="bg-[var(--color-bg-elevated)] overflow-hidden shrink-0 relative"
+          style={{ width: promptsCollapsed ? 0 : promptsWidth }}
         >
           {!promptsCollapsed && (
             <DndPromptList
@@ -248,14 +360,34 @@ function App() {
             />
           )}
         </div>
+        {/* Prompts drag handle */}
+        {!promptsCollapsed && (
+          <ResizeHandle
+            onMouseDown={(e) => handleSidebarDrag("prompts", e)}
+            onDoubleClick={togglePrompts}
+          />
+        )}
 
-        {/* Editor */}
-        <div className="flex-1 flex overflow-hidden bg-[var(--color-bg)]">
-          <div className="flex-1 overflow-hidden">
-            <PromptEditor />
+        {/* Editor + timeline */}
+        <div className="flex-1 flex overflow-hidden bg-[var(--color-bg)] min-w-0">
+          <div className="flex-1 overflow-hidden min-w-0">
+            <PromptEditor sidePanelMode={sidePanelMode} />
           </div>
-          <div className="w-56 shrink-0">
-            <RevisionTimeline />
+
+          {/* Timeline drag handle (only when timeline is visible) */}
+          {!timelineCollapsed && (
+            <ResizeHandle
+              onMouseDown={(e) => handleSidebarDrag("timeline", e)}
+              onDoubleClick={toggleTimeline}
+            />
+          )}
+
+          {/* Revision timeline — collapsible + resizable */}
+          <div
+            className="bg-[var(--color-bg-elevated)] overflow-hidden shrink-0"
+            style={{ width: timelineCollapsed ? 0 : timelineWidth }}
+          >
+            {!timelineCollapsed && <RevisionTimeline />}
           </div>
         </div>
       </div>

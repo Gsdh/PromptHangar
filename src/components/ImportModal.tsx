@@ -14,19 +14,70 @@ type Source = "Gemini" | "ChatGPT" | "Claude" | "Other";
 const SOURCES: Source[] = ["Gemini", "ChatGPT", "Claude", "Other"];
 
 /**
+ * Strips UI button labels and chrome artifacts that get copied along with
+ * conversation text when selecting all from Gemini, ChatGPT, Claude, etc.
+ *
+ * Removes lines that are purely UI noise: "Copy", "Edit", "Share", "Like",
+ * "Dislike", "Retry", "Report", "Regenerate", "Copy edit", "Good response",
+ * "Bad response", volume icons, Gemini disclaimers, etc.
+ */
+function stripUIArtifacts(text: string): string {
+  // Exact single-line UI labels (case-insensitive, full line match)
+  const uiLabels = new Set([
+    "copy", "edit", "share", "like", "dislike", "retry", "report",
+    "regenerate", "copy edit", "good response", "bad response",
+    "thumbs up", "thumbs down", "flag", "volume up", "volume off",
+    "volume down", "read aloud", "stop", "refresh", "more options",
+    "google it", "double check", "draft", "drafts", "show drafts",
+    "hide drafts", "use this draft", "export", "modify response",
+    "copy code", "run code", "preview", "expand", "collapse",
+    "save", "cancel", "send", "message", "respond",
+    // Dutch UI labels (Gemini in NL)
+    "kopiëren", "bewerken", "delen", "leuk", "niet leuk", "opnieuw proberen",
+    "melden", "opnieuw genereren", "goed antwoord", "slecht antwoord",
+    "google dit", "dubbel controleren",
+  ]);
+
+  // Patterns that match full lines of known UI noise
+  const uiLinePatterns = [
+    /^\d+\s*\/\s*\d+$/,                    // "1 / 3" (draft pagination)
+    /^[\u{1F44D}\u{1F44E}\u{2764}\u{2605}\u{2606}]+$/u, // pure emoji lines
+    /^Gemini may display inaccurate/i,
+    /^Gemini can make mistakes/i,
+    /^Google it$/i,
+    /^Conversation with Gemini$/i,
+    /^\d+ of \d+$/,                         // "2 of 5"
+  ];
+
+  const lines = text.split("\n");
+  const cleaned = lines.filter((line) => {
+    const trimmed = line.trim();
+    if (trimmed === "") return true; // keep blank lines (they separate paragraphs)
+    if (uiLabels.has(trimmed.toLowerCase())) return false;
+    if (uiLinePatterns.some((p) => p.test(trimmed))) return false;
+    return true;
+  });
+
+  // Collapse runs of 3+ blank lines down to 2 (artifact removal can create gaps)
+  return cleaned.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/**
  * Smart conversation splitter — handles multiple copy-paste formats:
  *
+ * Strategy 0: Strip UI artifacts (buttons, labels) before any detection
  * Strategy 1: Explicit markers ("You:", "ChatGPT:", "You said:", etc.)
- * Strategy 2: ChatGPT web UI format ("You said:\n...\nChatGPT said:\n...")
- * Strategy 3: Claude web UI format ("H\n...\nA\n..." or paragraph heuristic)
- * Strategy 4: Heuristic — first short block = question, rest = answer
+ * Strategy 1b: Standalone label format (Gemini/Claude: "You\n", "Gemini\n")
+ * Strategy 1d: Ollama CLI format (">>> prompt")
+ * Strategy 2: Block headers ("You said\n...\nChatGPT said\n...")
+ * Strategy 3: Heuristic — first short block = question, rest = answer
  *
  * Returns null only if the text is too short or has no detectable structure.
  */
 function splitConversation(
   text: string
 ): { prompt: string; response: string; method: string } | null {
-  const raw = text.trim();
+  const raw = stripUIArtifacts(text.trim());
   if (!raw || raw.length < 20) return null;
 
   // --- Strategy 1: Explicit role markers (most formats) ---
@@ -79,7 +130,46 @@ function splitConversation(
     if (result) return { ...result, method: "markers" };
   }
 
-  // --- Strategy 1b: Ollama CLI format (>>> prompt\nresponse\n>>> prompt\nresponse) ---
+  // --- Strategy 1b: Standalone label format (Gemini, Claude web UI) ---
+  // Gemini copies as:  "You\n[content]\n\nGemini\n[content]"
+  // Claude copies as:  "Human\n[content]\n\nAssistant\n[content]"
+  // No colon — just the name alone on its own line.
+  const standalonePatterns: { re: RegExp; role: "user" | "assistant" }[] = [
+    { re: /^You[ \t]*\n/gm, role: "user" },
+    { re: /^Human[ \t]*\n/gm, role: "user" },
+    { re: /^Gemini[ \t]*\n/gm, role: "assistant" },
+    { re: /^Claude[ \t]*\n/gm, role: "assistant" },
+    { re: /^ChatGPT[ \t]*\n/gm, role: "assistant" },
+    { re: /^Assistant[ \t]*\n/gm, role: "assistant" },
+    { re: /^Copilot[ \t]*\n/gm, role: "assistant" },
+    { re: /^Grok[ \t]*\n/gm, role: "assistant" },
+    { re: /^DeepSeek[ \t]*\n/gm, role: "assistant" },
+  ];
+  const standaloneMatches: Match[] = [];
+  for (const { re, role } of standalonePatterns) {
+    re.lastIndex = 0;
+    let found;
+    while ((found = re.exec(raw)) !== null) {
+      standaloneMatches.push({ index: found.index, role, length: found[0].length });
+    }
+  }
+  standaloneMatches.sort((a, b) => a.index - b.index);
+  // De-duplicate overlapping
+  const dedupedStandalone: Match[] = [];
+  for (const m of standaloneMatches) {
+    const last = dedupedStandalone[dedupedStandalone.length - 1];
+    if (last && Math.abs(last.index - m.index) < 5) {
+      if (m.length > last.length) dedupedStandalone[dedupedStandalone.length - 1] = m;
+    } else {
+      dedupedStandalone.push(m);
+    }
+  }
+  if (dedupedStandalone.length >= 2) {
+    const result = extractTurns(raw, dedupedStandalone);
+    if (result) return { ...result, method: "standalone-labels" };
+  }
+
+  // --- Strategy 1d: Ollama CLI format (>>> prompt\nresponse\n>>> prompt\nresponse) ---
   const ollamaPattern = /^>>>\s+/gm;
   const ollamaMatches: number[] = [];
   let ollamaMatch;
@@ -232,7 +322,8 @@ export function ImportModal({ onClose }: Props) {
 
     // Small delay so the textarea value updates first
     setTimeout(() => {
-      const split = splitConversation(pasted);
+      const cleaned = stripUIArtifacts(pasted);
+      const split = splitConversation(cleaned);
       if (split) {
         setPromptText(split.prompt);
         setResponseText(split.response);
@@ -240,6 +331,7 @@ export function ImportModal({ onClose }: Props) {
         const assistantCount = split.response.split("\n\n---\n\n").length;
         const methodLabels: Record<string, string> = {
           "markers": "role markers",
+          "standalone-labels": "standalone labels (Gemini / Claude format)",
           "ollama-cli": "Ollama CLI format",
           "block-headers": "block headers",
           "heuristic-short-first": "short question + long answer",
@@ -249,6 +341,9 @@ export function ImportModal({ onClose }: Props) {
           `Auto-split on paste (${methodLabels[split.method] ?? split.method}): ${userCount} question${userCount !== 1 ? "s" : ""}, ${assistantCount} answer${assistantCount !== 1 ? "s" : ""}. Verify below.`
         );
         setTimeout(() => setDetectNote(null), 8000);
+      } else if (cleaned !== pasted.trim()) {
+        // No split found but we stripped UI buttons — show cleaned text
+        setPromptText(cleaned);
       }
     }, 50);
   }
@@ -265,6 +360,7 @@ export function ImportModal({ onClose }: Props) {
 
       const methodLabels: Record<string, string> = {
         "markers": "role markers (You:, ChatGPT:, etc.)",
+        "standalone-labels": "standalone labels (Gemini / Claude format)",
         "ollama-cli": "Ollama CLI format (>>> prompts)",
         "block-headers": "block headers (You said / ChatGPT said)",
         "heuristic-short-first": "heuristic (short question + long answer)",

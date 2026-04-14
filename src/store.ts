@@ -137,7 +137,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
       allTags,
       initialized: true,
     });
-    document.documentElement.classList.toggle("dark", settings.theme === "dark");
+    document.documentElement.classList.remove("dark", "oled");
+    if (settings.theme === "dark") document.documentElement.classList.add("dark");
+    if (settings.theme === "oled") document.documentElement.classList.add("oled");
 
     // If there are folders, select the first one and load its prompts
     if (folders.length > 0) {
@@ -151,7 +153,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   async updateSettings(patch) {
     const next = await api.updateSettings(patch);
     set({ settings: next });
-    document.documentElement.classList.toggle("dark", next.theme === "dark");
+    document.documentElement.classList.remove("dark", "oled");
+    if (next.theme === "dark") document.documentElement.classList.add("dark");
+    if (next.theme === "oled") document.documentElement.classList.add("oled");
   },
 
   folders: [],

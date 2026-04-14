@@ -104,6 +104,7 @@ pub fn run() {
             commands::search_prompts,
             // export
             commands::export_prompt_to_file,
+            commands::write_text_file,
             // reorder / dnd
             commands::reorder_folders,
             commands::reorder_prompts,

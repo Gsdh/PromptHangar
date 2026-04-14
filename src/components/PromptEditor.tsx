@@ -16,6 +16,7 @@ import { PlaygroundPanel } from "./PlaygroundPanel";
 import { VariablesPanel } from "./VariablesPanel";
 import { CompressorPanel } from "./CompressorPanel";
 import { BottomPanel, TAB_ICONS, type BottomTab } from "./BottomPanel";
+import { SidePanel } from "./SidePanel";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { BatchEvalPanel } from "./BatchEvalPanel";
 import { DynamicIcon } from "./pickers";
@@ -23,7 +24,7 @@ import { estimateCost, estimateTokens, formatCost, isLocalModel } from "../lib/p
 import type { PromptWithLatest } from "../types";
 import type { Folder } from "../types";
 
-export function PromptEditor() {
+export function PromptEditor({ sidePanelMode = false }: { sidePanelMode?: boolean } = {}) {
   const activePrompt = useAppStore((s) => s.activePrompt);
   const draftContent = useAppStore((s) => s.draftContent);
   const draftSystemPrompt = useAppStore((s) => s.draftSystemPrompt);
@@ -96,7 +97,7 @@ export function PromptEditor() {
         latest={activePrompt.latest_revision}
       />
     ) : (
-      <div className="h-full flex flex-col">
+      <div className="h-full flex flex-col min-h-0">
         {/* Breadcrumb */}
         <Breadcrumb activePrompt={activePrompt} />
         {/* Header */}
@@ -221,7 +222,7 @@ export function PromptEditor() {
                 bracketMatching: false,
                 autocompletion: false,
               }}
-              theme={theme === "dark" ? "dark" : "light"}
+              theme={theme === "light" ? "light" : "dark"}
               height="100%"
               className="h-full text-sm"
             />
@@ -374,6 +375,18 @@ export function PromptEditor() {
       icon: TAB_ICONS.batchEvals,
       content: <BatchEvalPanel />,
     });
+  }
+
+  // When all left/right panes are collapsed, flip to a horizontal layout:
+  // the editor lives on the left and the tabs become a side panel on the
+  // right. This reclaims the vertical real estate freed by the collapse.
+  if (sidePanelMode && bottomTabs.length > 0) {
+    return (
+      <div className="h-full flex overflow-hidden">
+        <div className="flex-1 overflow-hidden min-w-0">{mainContent}</div>
+        <SidePanel tabs={bottomTabs} />
+      </div>
+    );
   }
 
   return (

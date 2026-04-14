@@ -36,6 +36,18 @@
   color-scheme: dark;
 }
 
+.oled {
+  --color-bg: #000000;
+  --color-bg-elevated: #0a0a0a;
+  --color-bg-subtle: #111111;
+  --color-border: #1a1a1a;
+  --color-border-strong: #2a2a2a;
+  --color-text: #f0f0f0;
+  --color-text-muted: #777777;
+  --color-accent: hsl(250, 90%, 75%);
+  color-scheme: dark;
+}
+
 html,
 body,
 #root {
@@ -168,4 +180,8 @@ body,
 }
 .dark .glass-panel {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+.oled .glass-panel {
+  background: color-mix(in srgb, #0a0a0a 95%, transparent);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.3);
 }

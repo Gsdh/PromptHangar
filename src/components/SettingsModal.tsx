@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X, PenLine, Terminal, WifiOff, Sun, Moon, BookOpen, Settings as SettingsIcon, Cloud, Check, Eye, EyeOff, Key } from "lucide-react";
+import { X, PenLine, Terminal, WifiOff, Sun, Moon, Smartphone, BookOpen, Settings as SettingsIcon, Cloud, Check, Eye, EyeOff, Key } from "lucide-react";
 import clsx from "clsx";
 import { useAppStore } from "../store";
 import type { AppMode, Theme } from "../types";
@@ -109,12 +109,18 @@ export function SettingsModal({ onClose }: Props) {
                    checked={settings.custom_features.showBatchEvals}
                    onChange={c => updateSettings({ custom_features: { ...settings.custom_features, showBatchEvals: c }})}
                 />
+                <FeatureToggle
+                   label="Compressor"
+                   hint="Reduce token count with compression strategies"
+                   checked={settings.custom_features.showCompressor}
+                   onChange={c => updateSettings({ custom_features: { ...settings.custom_features, showCompressor: c }})}
+                />
               </div>
             )}
           </Section>
 
           {/* Theme */}
-          <Section title="Theme" description="Light or dark.">
+          <Section title="Theme" description="Choose your visual style.">
             <div className="flex gap-2">
               <ModeOption
                 current={settings.theme}
@@ -128,6 +134,13 @@ export function SettingsModal({ onClose }: Props) {
                 mode="dark"
                 icon={<Moon size={14} />}
                 label="Dark"
+                onSelect={(t: Theme) => updateSettings({ theme: t })}
+              />
+              <ModeOption
+                current={settings.theme}
+                mode="oled"
+                icon={<Smartphone size={14} />}
+                label="OLED Black"
                 onSelect={(t: Theme) => updateSettings({ theme: t })}
               />
             </div>
