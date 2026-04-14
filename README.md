@@ -131,16 +131,44 @@ All ports configurable in Settings. Airgap hard-lock available to block all netw
 4. **Follow the tour** — 10 interactive steps introduce every feature
 5. **Start writing prompts** — Cmd+N to create, Cmd+S to save revisions
 
-### Optional: Local LLM testing
+### Setting up local models (Ollama)
 
-Install [Ollama](https://ollama.com) and pull a model:
+1. Install [Ollama](https://ollama.com)
+2. Open a terminal and run:
+   ```bash
+   ollama pull llama3.2
+   ollama serve
+   ```
+3. In PromptHangar, open the **Playground** (bottom panel, ⚡ icon)
+4. Click the **🔄 refresh** button — your model appears automatically
 
-```bash
-ollama pull llama3.3
-ollama serve
-```
+### Setting up local models (LM Studio)
 
-The Playground auto-detects it. Your prompts stay on your machine.
+1. Install [LM Studio](https://lmstudio.ai) and download a model
+2. Go to the **Developer** tab (left sidebar)
+3. Click **Start Server**
+4. **Important:** Open **Server Settings** and turn **"Enable CORS"** → **ON**
+5. In PromptHangar, open the **Playground** and click **🔄 refresh**
+
+> **Why CORS?** PromptHangar runs in a native window that needs permission to talk to LM Studio's local server. Without CORS enabled, LM Studio silently blocks the connection.
+
+### Setting up cloud models (Gemini, ChatGPT, Claude, etc.)
+
+1. Get an API key from your provider (e.g. [Google AI Studio](https://aistudio.google.com/apikey) for Gemini — free)
+2. In PromptHangar, go to **Settings** (⚙️ top right)
+3. Scroll to **Cloud Providers**, paste your key, click **Save**
+4. Open the **Playground** and click **🔄 refresh** — cloud models appear in the dropdown
+
+### Troubleshooting
+
+| Problem | Solution |
+|---|---|
+| Playground shows no models | Click the **🔄 refresh** button next to the model dropdown |
+| Local models not found | Make sure Ollama/LM Studio server is running, then refresh |
+| LM Studio not detected | Enable **CORS** in LM Studio → Developer → Server Settings |
+| Cloud models not working | Check that you saved your API key in Settings → Cloud Providers |
+| Nothing connects at all | Check that **Airgap mode** is OFF in Settings → Network |
+| LM Studio on another machine | Set the IP in Settings → Custom Local URL (e.g. `http://192.168.1.100:1234`) |
 
 ---
 
