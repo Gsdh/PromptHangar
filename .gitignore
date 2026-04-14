@@ -30,3 +30,6 @@ src-tauri/gen/
 *.njsproj
 *.sln
 *.sw?
+
+# Claude Code local session artifacts
+.claude/
