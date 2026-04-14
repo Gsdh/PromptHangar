@@ -133,9 +133,9 @@ export function PlaygroundPanel() {
   }
 
   return (
-    <div className="border-t border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+    <div className="h-full flex flex-col bg-[var(--color-bg-elevated)] min-h-0">
       {/* Toolbar */}
-      <div className="flex items-center gap-2 px-5 py-2 border-b border-[var(--color-border)]">
+      <div className="flex items-center gap-2 px-5 py-2 border-b border-[var(--color-border)] shrink-0 flex-wrap">
         <Zap size={12} className="text-[var(--color-accent)]" />
         <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
           Playground
@@ -222,11 +222,12 @@ export function PlaygroundPanel() {
         )}
       </div>
 
-      {/* Output area */}
+      {/* Output area — flex-1 so it fills whatever vertical space the panel has
+          (bottom or side), min-h-0 so overflow-y-auto actually kicks in. */}
       {(streamContent || error || running) && (
         <div
           ref={outputRef}
-          className="px-5 py-3 max-h-64 overflow-y-auto font-mono text-xs leading-relaxed whitespace-pre-wrap"
+          className="flex-1 min-h-0 overflow-y-auto px-5 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap"
         >
           {error ? (
             <div className="text-red-500">

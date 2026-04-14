@@ -42,8 +42,9 @@ export function SidePanel({ tabs, defaultTab }: Props) {
 
   if (visibleTabs.length === 0) return null;
 
-  const activeContent =
-    visibleTabs.find((t) => t.id === activeTab)?.content ?? visibleTabs[0]?.content;
+  // Every tab is rendered; only the active one is visible. This keeps each
+  // panel's internal state alive when the user switches tabs (Playground
+  // stream, Compressor result, Variables values, etc.).
 
   function handleDragStart(e: React.MouseEvent) {
     e.preventDefault();
@@ -165,9 +166,19 @@ export function SidePanel({ tabs, defaultTab }: Props) {
               </button>
             </div>
 
-            {/* Content area */}
-            <div className="flex-1 overflow-y-auto min-h-0 bg-[var(--color-bg-elevated)]">
-              {activeContent}
+            {/* Content area — every tab is mounted; only the active one is visible. */}
+            <div className="flex-1 min-h-0 flex flex-col bg-[var(--color-bg-elevated)]">
+              {visibleTabs.map((tab) => (
+                <div
+                  key={tab.id}
+                  className={clsx(
+                    "flex-1 min-h-0 flex flex-col overflow-y-auto",
+                    activeTab === tab.id ? "" : "hidden"
+                  )}
+                >
+                  {tab.content}
+                </div>
+              ))}
             </div>
           </>
         )}

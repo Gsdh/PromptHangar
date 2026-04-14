@@ -51,7 +51,10 @@ export function BottomPanel({ tabs, defaultTab }: Props) {
     }
   }, [activeTabExists, visibleTabs]);
 
-  const activeContent = visibleTabs.find((t) => t.id === activeTab)?.content ?? visibleTabs[0]?.content;
+  // Note: we render *every* visible tab and toggle visibility with CSS instead
+  // of mounting only the active one. This preserves each panel's internal
+  // state (Playground's stream + model choice, Compressor's result, Variables'
+  // values, etc.) when the user switches tabs.
 
   function handleDragStart(e: React.MouseEvent) {
     e.preventDefault();
@@ -138,10 +141,20 @@ export function BottomPanel({ tabs, defaultTab }: Props) {
         </button>
       </div>
 
-      {/* Content area */}
+      {/* Content area — every tab is mounted; only the active one is visible. */}
       {!collapsed && (
-        <div className="flex-1 overflow-y-auto min-h-0 bg-[var(--color-bg-elevated)]">
-          {activeContent}
+        <div className="flex-1 min-h-0 flex flex-col bg-[var(--color-bg-elevated)]">
+          {visibleTabs.map((tab) => (
+            <div
+              key={tab.id}
+              className={clsx(
+                "flex-1 min-h-0 flex flex-col overflow-y-auto",
+                activeTab === tab.id ? "" : "hidden"
+              )}
+            >
+              {tab.content}
+            </div>
+          ))}
         </div>
       )}
     </div>

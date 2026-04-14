@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.5"
+version = "0.1.6"
 description = "PromptHangar — privacy-first prompt engineering workbench"
 authors = ["Gores Hamad"]
 edition = "2021"

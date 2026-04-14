@@ -100,12 +100,14 @@ export function PromptEditor({ sidePanelMode = false }: { sidePanelMode?: boolea
       <div className="h-full flex flex-col min-h-0">
         {/* Breadcrumb */}
         <Breadcrumb activePrompt={activePrompt} />
-        {/* Header */}
-        <div className="flex items-center gap-3 px-5 py-3 border-b border-[var(--color-border)]">
+        {/* Header — wraps to a second row when the editor column is narrow so
+            the title isn't truncated down to "W..." and the toolbar doesn't get
+            crammed. EditableHeader holds a minimum width so the wrap triggers. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3 border-b border-[var(--color-border)]">
           <EditableHeader activePrompt={activePrompt} />
 
 
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end ml-auto">
             {dirty && (
               <span className="text-xs text-amber-600 dark:text-amber-400 mr-1">
                 • unsaved
@@ -135,7 +137,7 @@ export function PromptEditor({ sidePanelMode = false }: { sidePanelMode?: boolea
                 value={commitMsg}
                 onChange={(e) => setCommitMsg(e.target.value)}
                 placeholder="Commit note (optional)"
-                className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1 text-[10px] w-36 focus:outline-none focus:border-[var(--color-accent)] placeholder:text-[var(--color-text-muted)]/50"
+                className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1 text-[10px] w-36 min-w-0 flex-shrink focus:outline-none focus:border-[var(--color-accent)] placeholder:text-[var(--color-text-muted)]/50"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") void doSave();
                 }}
@@ -477,7 +479,7 @@ function EditableHeader({ activePrompt }: { activePrompt: PromptWithLatest }) {
   }
 
   return (
-    <div className="flex-1 min-w-0">
+    <div className="flex-1 min-w-0 basis-[220px]">
       {editingTitle ? (
         <input
           autoFocus
