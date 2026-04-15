@@ -36,9 +36,10 @@ fn row_to_folder(row: &Row) -> rusqlite::Result<Folder> {
 }
 
 fn row_to_prompt(row: &Row) -> rusqlite::Result<Prompt> {
-    // `view_prefs` and `git_workspace_id` may be absent from SELECTs written
-    // before those columns existed. Treat missing as None, malformed JSON
-    // as None, so old queries and old rows both keep working.
+    // Newer columns (`view_prefs`, `git_workspace_id`, baseline/champion)
+    // may be absent from SELECTs written before those columns existed.
+    // `.ok().flatten()` treats "column not in result set" the same as
+    // "column is NULL" so old call sites and old rows both keep working.
     let view_prefs = row
         .get::<_, Option<String>>("view_prefs")
         .ok()
@@ -46,6 +47,14 @@ fn row_to_prompt(row: &Row) -> rusqlite::Result<Prompt> {
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
     let git_workspace_id = row
         .get::<_, Option<String>>("git_workspace_id")
+        .ok()
+        .flatten();
+    let baseline_revision_id = row
+        .get::<_, Option<String>>("baseline_revision_id")
+        .ok()
+        .flatten();
+    let champion_revision_id = row
+        .get::<_, Option<String>>("champion_revision_id")
         .ok()
         .flatten();
     Ok(Prompt {
@@ -61,6 +70,8 @@ fn row_to_prompt(row: &Row) -> rusqlite::Result<Prompt> {
             .unwrap_or_else(|_| Utc::now()),
         view_prefs,
         git_workspace_id,
+        baseline_revision_id,
+        champion_revision_id,
     })
 }
 
@@ -216,14 +227,16 @@ pub fn list_prompts(
     let mut stmt = if folder_id.is_some() {
         conn.prepare(
             "SELECT id, folder_id, title, description, created_at, updated_at,
-                    view_prefs, git_workspace_id
+                    view_prefs, git_workspace_id,
+                baseline_revision_id, champion_revision_id
              FROM prompts WHERE folder_id = ?1
              ORDER BY sort_order ASC, updated_at DESC",
         )?
     } else {
         conn.prepare(
             "SELECT id, folder_id, title, description, created_at, updated_at,
-                    view_prefs, git_workspace_id
+                    view_prefs, git_workspace_id,
+                baseline_revision_id, champion_revision_id
              FROM prompts ORDER BY sort_order ASC, updated_at DESC",
         )?
     };
@@ -295,7 +308,8 @@ pub fn get_prompt(db: State<DbPool>, id: String) -> AppResult<PromptWithLatest> 
     let conn = db.lock();
     let prompt: Prompt = conn.query_row(
         "SELECT id, folder_id, title, description, created_at, updated_at,
-                view_prefs, git_workspace_id
+                view_prefs, git_workspace_id,
+                baseline_revision_id, champion_revision_id
          FROM prompts WHERE id = ?1",
         params![id],
         row_to_prompt,
@@ -336,7 +350,8 @@ pub fn create_prompt(db: State<DbPool>, input: CreatePromptInput) -> AppResult<P
 
     let prompt: Prompt = conn.query_row(
         "SELECT id, folder_id, title, description, created_at, updated_at,
-                view_prefs, git_workspace_id
+                view_prefs, git_workspace_id,
+                baseline_revision_id, champion_revision_id
          FROM prompts WHERE id = ?1",
         params![id],
         row_to_prompt,
@@ -363,6 +378,13 @@ pub struct UpdatePromptInput {
     /// Link this prompt to a Git workspace, or `null` to unlink. Epic 2.
     #[serde(default)]
     pub git_workspace_id: Option<Option<String>>,
+    /// Pin a revision as the comparison baseline (Epic 7).
+    /// `Some(Some(id))` → pin, `Some(None)` → unpin, `None` → leave alone.
+    #[serde(default)]
+    pub baseline_revision_id: Option<Option<String>>,
+    /// Flag a revision as the champion (Epic 7). Same tri-state semantics.
+    #[serde(default)]
+    pub champion_revision_id: Option<Option<String>>,
 }
 
 #[tauri::command]
@@ -401,6 +423,18 @@ pub fn update_prompt(db: State<DbPool>, input: UpdatePromptInput) -> AppResult<(
         conn.execute(
             "UPDATE prompts SET git_workspace_id = ?1, updated_at = ?2 WHERE id = ?3",
             params![workspace_opt, now, input.id],
+        )?;
+    }
+    if let Some(baseline_opt) = &input.baseline_revision_id {
+        conn.execute(
+            "UPDATE prompts SET baseline_revision_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![baseline_opt, now, input.id],
+        )?;
+    }
+    if let Some(champion_opt) = &input.champion_revision_id {
+        conn.execute(
+            "UPDATE prompts SET champion_revision_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![champion_opt, now, input.id],
         )?;
     }
     update_fts(&conn, &input.id)?;
@@ -969,7 +1003,8 @@ pub fn list_recent_prompts(db: State<DbPool>, limit: Option<i64>) -> AppResult<V
     let lim = limit.unwrap_or(20);
     let mut stmt = conn.prepare(
         "SELECT id, folder_id, title, description, created_at, updated_at,
-                view_prefs, git_workspace_id
+                view_prefs, git_workspace_id,
+                baseline_revision_id, champion_revision_id
          FROM prompts ORDER BY updated_at DESC LIMIT ?1",
     )?;
     let prompts: Vec<Prompt> = stmt
@@ -1059,7 +1094,8 @@ pub fn duplicate_prompt(db: State<DbPool>, prompt_id: String) -> AppResult<Promp
     // Copy prompt
     let src: Prompt = conn.query_row(
         "SELECT id, folder_id, title, description, created_at, updated_at,
-                view_prefs, git_workspace_id
+                view_prefs, git_workspace_id,
+                baseline_revision_id, champion_revision_id
          FROM prompts WHERE id = ?1",
         params![prompt_id],
         row_to_prompt,
@@ -1115,7 +1151,8 @@ pub fn duplicate_prompt(db: State<DbPool>, prompt_id: String) -> AppResult<Promp
     // Return the new prompt
     let prompt: Prompt = conn.query_row(
         "SELECT id, folder_id, title, description, created_at, updated_at,
-                view_prefs, git_workspace_id
+                view_prefs, git_workspace_id,
+                baseline_revision_id, champion_revision_id
          FROM prompts WHERE id = ?1",
         params![new_id],
         row_to_prompt,
@@ -1342,6 +1379,13 @@ pub struct SaveTraceInput {
     /// 'live' (default), 'manual' (user pasted), or 'imported'. See Epic 4.
     #[serde(default)]
     pub source: Option<String>,
+    /// Epic 7 — groups the baseline + candidate trace(s) produced by
+    /// a single Run-comparison click.
+    #[serde(default)]
+    pub comparison_id: Option<String>,
+    /// Epic 7 — 'baseline' | 'candidate'. NULL for non-comparison runs.
+    #[serde(default)]
+    pub comparison_side: Option<String>,
 }
 
 #[tauri::command]
@@ -1352,14 +1396,16 @@ pub fn save_trace(db: State<DbPool>, input: SaveTraceInput) -> AppResult<String>
     conn.execute(
         "INSERT INTO traces (id, prompt_id, revision_id, provider, model, input_messages, output,
                              input_tokens, output_tokens, latency_ms, cost_usd, status, error,
-                             metadata, run_group_id, source, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                             metadata, run_group_id, source, comparison_id, comparison_side,
+                             created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         params![
             id, input.prompt_id, input.revision_id, input.provider, input.model,
             input.input_messages, input.output, input.input_tokens, input.output_tokens,
             input.latency_ms, input.cost_usd, input.status.unwrap_or_else(|| "success".into()),
             input.error, input.metadata, input.run_group_id,
-            input.source.unwrap_or_else(|| "live".into()), now
+            input.source.unwrap_or_else(|| "live".into()),
+            input.comparison_id, input.comparison_side, now
         ],
     )?;
     Ok(id)
@@ -1377,14 +1423,16 @@ pub fn list_traces(
     let (sql, param_val): (String, Option<String>) = if let Some(pid) = prompt_id {
         (
             "SELECT id, prompt_id, revision_id, provider, model, input_tokens, output_tokens,
-                    latency_ms, cost_usd, status, error, created_at, run_group_id, source
+                    latency_ms, cost_usd, status, error, created_at, run_group_id, source,
+                    comparison_id, comparison_side
              FROM traces WHERE prompt_id = ?1 ORDER BY created_at DESC LIMIT ?2".into(),
             Some(pid),
         )
     } else {
         (
             "SELECT id, prompt_id, revision_id, provider, model, input_tokens, output_tokens,
-                    latency_ms, cost_usd, status, error, created_at, run_group_id, source
+                    latency_ms, cost_usd, status, error, created_at, run_group_id, source,
+                    comparison_id, comparison_side
              FROM traces ORDER BY created_at DESC LIMIT ?1".into(),
             None,
         )
@@ -1409,6 +1457,8 @@ pub fn list_traces(
                 "created_at": r.get::<_, String>(11)?,
                 "run_group_id": r.get::<_, Option<String>>(12)?,
                 "source": r.get::<_, String>(13)?,
+                "comparison_id": r.get::<_, Option<String>>(14)?,
+                "comparison_side": r.get::<_, Option<String>>(15)?,
             }))
         })?;
         for r in rows { out.push(r?); }
@@ -1430,10 +1480,59 @@ pub fn list_traces(
                 "created_at": r.get::<_, String>(11)?,
                 "run_group_id": r.get::<_, Option<String>>(12)?,
                 "source": r.get::<_, String>(13)?,
+                "comparison_id": r.get::<_, Option<String>>(14)?,
+                "comparison_side": r.get::<_, Option<String>>(15)?,
             }))
         })?;
         for r in rows { out.push(r?); }
     }
+    Ok(out)
+}
+
+/// Fetch all traces tagged with the given `comparison_id`. Returns
+/// 'baseline' rows first, then 'candidate' — same column shape as
+/// `list_traces` — so the Comparison modal can split them client-side.
+#[tauri::command]
+pub fn get_comparison(
+    db: State<DbPool>,
+    comparison_id: String,
+) -> AppResult<Vec<serde_json::Value>> {
+    let conn = db.lock();
+    let mut stmt = conn.prepare(
+        "SELECT id, prompt_id, revision_id, provider, model, input_tokens, output_tokens,
+                latency_ms, cost_usd, status, error, created_at, run_group_id, source,
+                comparison_id, comparison_side, output, input_messages
+         FROM traces
+         WHERE comparison_id = ?1
+         ORDER BY comparison_side ASC, created_at ASC",
+    )?;
+    let rows = stmt.query_map(params![comparison_id], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, String>(0)?,
+            "prompt_id": r.get::<_, Option<String>>(1)?,
+            "revision_id": r.get::<_, Option<String>>(2)?,
+            "provider": r.get::<_, String>(3)?,
+            "model": r.get::<_, String>(4)?,
+            "input_tokens": r.get::<_, Option<i64>>(5)?,
+            "output_tokens": r.get::<_, Option<i64>>(6)?,
+            "latency_ms": r.get::<_, Option<i64>>(7)?,
+            "cost_usd": r.get::<_, Option<f64>>(8)?,
+            "status": r.get::<_, String>(9)?,
+            "error": r.get::<_, Option<String>>(10)?,
+            "created_at": r.get::<_, String>(11)?,
+            "run_group_id": r.get::<_, Option<String>>(12)?,
+            "source": r.get::<_, String>(13)?,
+            "comparison_id": r.get::<_, Option<String>>(14)?,
+            "comparison_side": r.get::<_, Option<String>>(15)?,
+            // Full output text + request messages so the modal can render
+            // the response content and a diff against the baseline without
+            // another round-trip.
+            "output": r.get::<_, String>(16)?,
+            "input_messages": r.get::<_, String>(17)?,
+        }))
+    })?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r?); }
     Ok(out)
 }
 
@@ -1505,7 +1604,8 @@ pub fn export_prompt_to_file(db: State<DbPool>, input: ExportInput) -> AppResult
     let conn = db.lock();
     let prompt: Prompt = conn.query_row(
         "SELECT id, folder_id, title, description, created_at, updated_at,
-                view_prefs, git_workspace_id
+                view_prefs, git_workspace_id,
+                baseline_revision_id, champion_revision_id
          FROM prompts WHERE id = ?1",
         params![input.prompt_id],
         row_to_prompt,

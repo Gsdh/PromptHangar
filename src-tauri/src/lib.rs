@@ -88,6 +88,7 @@ pub fn run() {
             // tracing
             commands::save_trace,
             commands::list_traces,
+            commands::get_comparison,
             // eval scores
             commands::save_eval_score,
             commands::get_eval_scores,

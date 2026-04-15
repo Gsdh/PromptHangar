@@ -15,6 +15,8 @@ import {
   TrendingDown,
   Minus,
   Palette,
+  Target,
+  Trophy,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import * as api from "../api";
@@ -36,6 +38,10 @@ export function RevisionTimeline() {
   const mode = useAppStore((s) => s.settings?.mode ?? "basic");
   const updateRevisionMeta = useAppStore((s) => s.updateRevisionMeta);
   const updateViewPrefs = useAppStore((s) => s.updateViewPrefs);
+  const updatePromptMeta = useAppStore((s) => s.updatePromptMeta);
+
+  const baselineId = activePrompt?.prompt.baseline_revision_id ?? null;
+  const championId = activePrompt?.prompt.champion_revision_id ?? null;
 
   const [searchQuery, setSearchQuery] = useState("");
   const [filterFlagged, setFilterFlagged] = useState(false);
@@ -304,6 +310,8 @@ export function RevisionTimeline() {
             {group.revisions.map((rev) => {
               const isCurrent = rev.id === currentViewing;
               const isLatest = rev.id === latestId;
+              const isBaseline = rev.id === baselineId;
+              const isChampion = rev.id === championId;
               const tint = revisionTint(rev, colorBy, evalScores[rev.id]);
               return (
                 <RevisionItem
@@ -311,6 +319,8 @@ export function RevisionTimeline() {
                   rev={rev}
                   isCurrent={isCurrent}
                   isLatest={isLatest}
+                  isBaseline={isBaseline}
+                  isChampion={isChampion}
                   mode={mode}
                   tint={tint}
                   evalScore={evalScores[rev.id]}
@@ -341,6 +351,34 @@ export function RevisionTimeline() {
                     setEnvironments(envs);
                     toast(`Revision #${rev.revision_number} promoted to ${env}`, "success");
                   }}
+                  onPinBaseline={async () => {
+                    if (!activePrompt) return;
+                    const next = isBaseline ? null : rev.id;
+                    await updatePromptMeta({
+                      id: activePrompt.prompt.id,
+                      baseline_revision_id: next,
+                    });
+                    toast(
+                      next
+                        ? `Rev #${rev.revision_number} pinned as baseline`
+                        : `Baseline cleared`,
+                      "success",
+                    );
+                  }}
+                  onMarkChampion={async () => {
+                    if (!activePrompt) return;
+                    const next = isChampion ? null : rev.id;
+                    await updatePromptMeta({
+                      id: activePrompt.prompt.id,
+                      champion_revision_id: next,
+                    });
+                    toast(
+                      next
+                        ? `Rev #${rev.revision_number} crowned champion 🏆`
+                        : `Champion cleared`,
+                      "success",
+                    );
+                  }}
                 />
               );
             })}
@@ -368,6 +406,8 @@ function RevisionItem({
   rev,
   isCurrent,
   isLatest,
+  isBaseline,
+  isChampion,
   mode,
   tint,
   evalScore,
@@ -378,10 +418,14 @@ function RevisionItem({
   onSaveNote,
   onFork,
   onPromote,
+  onPinBaseline,
+  onMarkChampion,
 }: {
   rev: Revision;
   isCurrent: boolean;
   isLatest: boolean;
+  isBaseline: boolean;
+  isChampion: boolean;
   mode: string;
   tint: RevisionTint | null;
   evalScore?: number;
@@ -392,6 +436,8 @@ function RevisionItem({
   onSaveNote: (note: string) => void;
   onFork: () => void;
   onPromote: (env: string) => void;
+  onPinBaseline: () => void;
+  onMarkChampion: () => void;
 }) {
   const [promoteOpen, setPromoteOpen] = useState(false);
   const promoteBtnRef = useRef<HTMLButtonElement>(null);
@@ -435,6 +481,24 @@ function RevisionItem({
           {isLatest && (
             <span className="text-[9px] bg-[var(--color-accent)] text-white px-1 rounded uppercase">
               latest
+            </span>
+          )}
+          {isChampion && (
+            <span
+              title="Champion — this revision wins the bake-off"
+              className="flex items-center gap-0.5 text-[9px] bg-amber-400/20 text-amber-600 dark:text-amber-400 px-1 rounded uppercase font-bold"
+            >
+              <Trophy size={9} className="fill-amber-400 text-amber-500" />
+              champ
+            </span>
+          )}
+          {isBaseline && (
+            <span
+              title="Baseline — head-to-head runs compare against this revision"
+              className="flex items-center gap-0.5 text-[9px] bg-blue-500/20 text-blue-600 dark:text-blue-400 px-1 rounded uppercase font-bold"
+            >
+              <Target size={9} />
+              base
             </span>
           )}
           <button
@@ -502,8 +566,38 @@ function RevisionItem({
               </span>
             </span>
           )}
-          {/* Action buttons — visible on hover */}
-          <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          {/* Action buttons — visible on hover (baseline + champion stay
+              visible when set so the state is discoverable) */}
+          <div className={clsx(
+            "ml-auto flex items-center gap-0.5 transition-opacity",
+            (isBaseline || isChampion) ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+          )}>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onPinBaseline(); }}
+              className={clsx(
+                "p-0.5 rounded",
+                isBaseline
+                  ? "text-blue-500"
+                  : "text-[var(--color-text-muted)] hover:text-blue-500",
+              )}
+              title={isBaseline ? "Unpin baseline" : "Pin as baseline (compare future runs against this)"}
+            >
+              <Target size={9} />
+            </button>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onMarkChampion(); }}
+              className={clsx(
+                "p-0.5 rounded",
+                isChampion
+                  ? "text-amber-500"
+                  : "text-[var(--color-text-muted)] hover:text-amber-500",
+              )}
+              title={isChampion ? "Clear champion" : "Mark as champion"}
+            >
+              <Trophy size={9} className={isChampion ? "fill-amber-400" : ""} />
+            </button>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onFork(); }}

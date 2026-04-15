@@ -7,6 +7,7 @@ import {
   MoreHorizontal,
   FolderInput,
   ChevronRight,
+  Trophy,
 } from "lucide-react";
 import clsx from "clsx";
 import type { Folder, PromptWithLatest } from "../types";
@@ -194,6 +195,14 @@ function PromptRow({
         ) : (
           <span className="truncate text-sm font-medium flex-1">
             {entry.prompt.title}
+          </span>
+        )}
+        {entry.prompt.champion_revision_id && !renaming && (
+          <span
+            className="text-amber-500 shrink-0"
+            title="Has a champion revision"
+          >
+            <Trophy size={11} />
           </span>
         )}
         {entry.revision_count > 0 && !renaming && (

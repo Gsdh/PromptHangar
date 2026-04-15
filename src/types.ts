@@ -29,6 +29,10 @@ export interface Prompt {
   view_prefs?: PromptViewPrefs | null;
   /** Epic 2 — linked Git workspace, if any. */
   git_workspace_id?: string | null;
+  /** Epic 7 — revision pinned as the comparison baseline. */
+  baseline_revision_id?: string | null;
+  /** Epic 7 — revision flagged as the winner (trophy badge). */
+  champion_revision_id?: string | null;
 }
 
 export interface Revision {

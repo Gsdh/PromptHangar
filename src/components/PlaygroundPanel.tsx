@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Play, Square, Zap, Clock, Hash, RefreshCw, Lightbulb, Lock, Columns3, Check } from "lucide-react";
+import { Play, Square, Zap, Clock, Hash, RefreshCw, Lightbulb, Lock, Columns3, Check, Swords } from "lucide-react";
 import clsx from "clsx";
 import { useAppStore } from "../store";
 import {
@@ -13,9 +13,11 @@ import { estimateCostUsd, formatCost } from "../lib/pricing";
 import * as api from "../api";
 import { FloatingMenu } from "./FloatingMenu";
 import { toast } from "./Toast";
+import { ComparisonModal } from "./ComparisonModal";
 
 export function PlaygroundPanel() {
   const activePrompt = useAppStore((s) => s.activePrompt);
+  const revisions = useAppStore((s) => s.revisions);
   const draftContent = useAppStore((s) => s.draftContent);
   const draftSystemPrompt = useAppStore((s) => s.draftSystemPrompt);
   const draftParams = useAppStore((s) => s.draftParams);
@@ -31,6 +33,17 @@ export function PlaygroundPanel() {
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const outputRef = useRef<HTMLDivElement>(null);
+
+  // --- Bake-off (Epic 7) ---
+  // When a baseline revision is pinned, show a "Bake-off" button that fires
+  // the current draft AND the baseline revision's content to the selected
+  // model(s), sharing a `comparison_id` so the modal can pair them.
+  const [comparisonId, setComparisonId] = useState<string | null>(null);
+  const baselineId = activePrompt?.prompt.baseline_revision_id ?? null;
+  const baselineRev = useMemo(
+    () => revisions.find((r) => r.id === baselineId) ?? null,
+    [revisions, baselineId],
+  );
 
   // --- Multi-provider fan-out (Epic 6) ---
   // We keep multi-select state alongside single-select so the default single
@@ -104,6 +117,8 @@ export function PlaygroundPanel() {
     promptId,
     revisionId,
     runGroupId,
+    comparisonId,
+    comparisonSide,
     signal,
     streamTo,
   }: {
@@ -112,6 +127,9 @@ export function PlaygroundPanel() {
     promptId: string;
     revisionId: string | null;
     runGroupId: string | null;
+    /** Epic 7 — pair baseline/candidate traces into one comparison. */
+    comparisonId?: string | null;
+    comparisonSide?: "baseline" | "candidate" | null;
     signal: AbortSignal;
     streamTo: "panel" | "silent";
   }): Promise<{ ok: boolean; content: string; stats: RunStats | null; error?: string }> {
@@ -185,6 +203,8 @@ export function PlaygroundPanel() {
                 status: "success",
                 source: "live",
                 run_group_id: runGroupId ?? undefined,
+                comparison_id: comparisonId ?? undefined,
+                comparison_side: comparisonSide ?? undefined,
               });
             } catch {
               /* trace save failure non-critical */
@@ -372,6 +392,111 @@ export function PlaygroundPanel() {
     setTimeout(() => setFanOutProgress(null), 2500);
   }
 
+  /**
+   * Epic 7 — Bake-off.
+   * Fire the current draft AND the pinned baseline revision in parallel to
+   * the selected model(s), sharing a `comparison_id`. The modal that opens
+   * after completion fetches every trace under that id and displays them
+   * paired side-by-side with cost / latency / token deltas.
+   *
+   * In compare (multi-model) mode, each selected model gets both a baseline
+   * and a candidate run — so N models → 2·N trace rows under one comparison.
+   */
+  async function handleBakeOff() {
+    if (!activePrompt || running || !draftContent.trim()) return;
+    if (!baselineRev) {
+      toast("Pin a baseline revision first", "error");
+      return;
+    }
+    const targets = compareMode ? selectedMulti : selectedModel ? [selectedModel] : [];
+    if (targets.length === 0) {
+      toast("Pick a model first", "error");
+      return;
+    }
+
+    const promptId = activePrompt.prompt.id;
+    const latestRevisionId = activePrompt.latest_revision?.id ?? null;
+    const nextComparisonId = crypto.randomUUID();
+
+    setRunning(true);
+    setStreamContent("");
+    setStats(null);
+    setError(null);
+    setFanOutProgress({ total: targets.length * 2, done: 0, failed: 0 });
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    // Baseline messages = the baseline revision's frozen content/system prompt.
+    const baselineMessages: ChatMessage[] = [];
+    if (baselineRev.system_prompt?.trim()) {
+      baselineMessages.push({ role: "system", content: baselineRev.system_prompt });
+    }
+    baselineMessages.push({ role: "user", content: baselineRev.content });
+
+    // Candidate messages = whatever is in the editor draft right now.
+    const candidateMessages: ChatMessage[] = [];
+    if (draftSystemPrompt.trim()) {
+      candidateMessages.push({ role: "system", content: draftSystemPrompt });
+    }
+    candidateMessages.push({ role: "user", content: draftContent });
+
+    type Task = {
+      model: LLMModel;
+      side: "baseline" | "candidate";
+      messages: ChatMessage[];
+      revisionId: string | null;
+    };
+    const tasks: Task[] = targets.flatMap((m) => [
+      { model: m, side: "baseline" as const, messages: baselineMessages, revisionId: baselineRev.id },
+      { model: m, side: "candidate" as const, messages: candidateMessages, revisionId: latestRevisionId },
+    ]);
+
+    const results = await Promise.all(
+      tasks.map(async (t) => {
+        const r = await runOne({
+          model: t.model,
+          messages: t.messages,
+          promptId,
+          revisionId: t.revisionId,
+          runGroupId: nextComparisonId, // reuse for convenience; analytics groups by run_group_id
+          comparisonId: nextComparisonId,
+          comparisonSide: t.side,
+          signal: controller.signal,
+          streamTo: "silent",
+        });
+        setFanOutProgress((prev) =>
+          prev
+            ? {
+                ...prev,
+                done: prev.done + 1,
+                failed: prev.failed + (r.ok ? 0 : 1),
+              }
+            : prev,
+        );
+        return { task: t, ...r };
+      }),
+    );
+
+    setRunning(false);
+    abortRef.current = null;
+    await useAppStore.getState().refreshOutputs();
+
+    const failed = results.filter((r) => !r.ok);
+    const ok = results.length - failed.length;
+    if (failed.length === results.length) {
+      toast(`Bake-off failed: all ${failed.length} runs errored`, "error");
+      setError(failed[0].error ?? "unknown error");
+    } else if (failed.length > 0) {
+      toast(`Bake-off: ${ok} / ${results.length} runs succeeded`, "info");
+      setComparisonId(nextComparisonId);
+    } else {
+      toast(`Bake-off complete — ${targets.length} model${targets.length === 1 ? "" : "s"}`, "success");
+      setComparisonId(nextComparisonId);
+    }
+    setTimeout(() => setFanOutProgress(null), 2500);
+  }
+
   function handleStop() {
     abortRef.current?.abort();
     setRunning(false);
@@ -523,6 +648,23 @@ export function PlaygroundPanel() {
           <Columns3 size={10} />
           Compare
         </button>
+
+        {/* Bake-off — only offered when a baseline revision is pinned. */}
+        {baselineRev && (
+          <button
+            type="button"
+            onClick={() => void handleBakeOff()}
+            disabled={running || !draftContent.trim() || (compareMode ? selectedMulti.length === 0 : !selectedModel)}
+            className={clsx(
+              "flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-colors border",
+              "border-amber-500/40 text-amber-600 hover:bg-amber-500/10 disabled:opacity-40 disabled:cursor-not-allowed",
+            )}
+            title={`Bake-off: run draft vs baseline #${baselineRev.revision_number}`}
+          >
+            <Swords size={10} />
+            Bake-off
+          </button>
+        )}
 
         <div className="flex-1" />
 
@@ -678,6 +820,14 @@ export function PlaygroundPanel() {
             <Lock size={12} /> Everything stays on your machine — zero data leaves.
           </div>
         </div>
+      )}
+
+      {/* Comparison modal — opens after a successful bake-off. */}
+      {comparisonId && (
+        <ComparisonModal
+          comparisonId={comparisonId}
+          onClose={() => setComparisonId(null)}
+        />
       )}
     </div>
   );

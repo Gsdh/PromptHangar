@@ -75,6 +75,13 @@ export function updatePrompt(input: {
    * `undefined` = leave unchanged, `null` = unlink, string = link to that id.
    */
   git_workspace_id?: string | null;
+  /**
+   * Epic 7 — pin/unpin a revision as the comparison baseline.
+   * Tri-state: omit = leave, `null` = unpin, string = pin to that revision id.
+   */
+  baseline_revision_id?: string | null;
+  /** Epic 7 — same semantics; marks the winner. */
+  champion_revision_id?: string | null;
 }): Promise<void> {
   return invoke("update_prompt", { input });
 }
@@ -230,6 +237,10 @@ export function saveTrace(input: {
   run_group_id?: string | null;
   /** Epic 4 — 'live' (default), 'manual', or 'imported'. */
   source?: TraceSource;
+  /** Epic 7 — shared id pairing baseline + candidate trace(s). */
+  comparison_id?: string | null;
+  /** Epic 7 — 'baseline' | 'candidate'. */
+  comparison_side?: "baseline" | "candidate" | null;
 }): Promise<string> {
   return invoke("save_trace", { input });
 }
@@ -249,10 +260,23 @@ export interface TraceRow {
   created_at: string;
   run_group_id: string | null;
   source: TraceSource;
+  /** Epic 7. Present on both sides of a comparison; NULL otherwise. */
+  comparison_id?: string | null;
+  comparison_side?: "baseline" | "candidate" | null;
 }
 
 export function listTraces(promptId?: string | null, limit?: number): Promise<TraceRow[]> {
   return invoke("list_traces", { promptId: promptId ?? null, limit: limit ?? 100 });
+}
+
+/** Full trace rows for a single comparison, including `output` + `input_messages`. */
+export interface ComparisonTrace extends TraceRow {
+  output: string;
+  input_messages: string;
+}
+
+export function getComparison(comparisonId: string): Promise<ComparisonTrace[]> {
+  return invoke("get_comparison", { comparisonId });
 }
 
 // ---------- Eval Scores ----------

@@ -27,6 +27,12 @@ pub struct Prompt {
     /// Linked Git workspace, if any (Epic 2).
     #[serde(default)]
     pub git_workspace_id: Option<String>,
+    /// Revision pinned as the comparison reference (Epic 7).
+    #[serde(default)]
+    pub baseline_revision_id: Option<String>,
+    /// Revision flagged as the winner (Epic 7) — shown with a trophy badge.
+    #[serde(default)]
+    pub champion_revision_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

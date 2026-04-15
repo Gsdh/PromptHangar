@@ -56,6 +56,10 @@ interface AppStore {
     folder_id?: string;
     view_prefs?: PromptViewPrefs;
     git_workspace_id?: string | null;
+    /** Epic 7 — pin/unpin a revision as the comparison baseline. */
+    baseline_revision_id?: string | null;
+    /** Epic 7 — mark/unmark a revision as the champion. */
+    champion_revision_id?: string | null;
   }) => Promise<void>;
   /** Merge-patch view_prefs on the active prompt; optimistic + persisted. */
   updateViewPrefs: (patch: Partial<PromptViewPrefs>) => Promise<void>;
