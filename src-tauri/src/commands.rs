@@ -35,6 +35,18 @@ fn row_to_folder(row: &Row) -> rusqlite::Result<Folder> {
 }
 
 fn row_to_prompt(row: &Row) -> rusqlite::Result<Prompt> {
+    // `view_prefs` and `git_workspace_id` may be absent from SELECTs written
+    // before those columns existed. Treat missing as None, malformed JSON
+    // as None, so old queries and old rows both keep working.
+    let view_prefs = row
+        .get::<_, Option<String>>("view_prefs")
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+    let git_workspace_id = row
+        .get::<_, Option<String>>("git_workspace_id")
+        .ok()
+        .flatten();
     Ok(Prompt {
         id: row.get("id")?,
         folder_id: row.get("folder_id")?,
@@ -46,6 +58,8 @@ fn row_to_prompt(row: &Row) -> rusqlite::Result<Prompt> {
         updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>("updated_at")?)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
+        view_prefs,
+        git_workspace_id,
     })
 }
 
@@ -200,13 +214,15 @@ pub fn list_prompts(
     let conn = db.lock();
     let mut stmt = if folder_id.is_some() {
         conn.prepare(
-            "SELECT id, folder_id, title, description, created_at, updated_at
+            "SELECT id, folder_id, title, description, created_at, updated_at,
+                    view_prefs, git_workspace_id
              FROM prompts WHERE folder_id = ?1
              ORDER BY sort_order ASC, updated_at DESC",
         )?
     } else {
         conn.prepare(
-            "SELECT id, folder_id, title, description, created_at, updated_at
+            "SELECT id, folder_id, title, description, created_at, updated_at,
+                    view_prefs, git_workspace_id
              FROM prompts ORDER BY sort_order ASC, updated_at DESC",
         )?
     };
@@ -277,7 +293,8 @@ fn canonical_tag(raw: &str) -> String {
 pub fn get_prompt(db: State<DbPool>, id: String) -> AppResult<PromptWithLatest> {
     let conn = db.lock();
     let prompt: Prompt = conn.query_row(
-        "SELECT id, folder_id, title, description, created_at, updated_at
+        "SELECT id, folder_id, title, description, created_at, updated_at,
+                view_prefs, git_workspace_id
          FROM prompts WHERE id = ?1",
         params![id],
         row_to_prompt,
@@ -317,7 +334,8 @@ pub fn create_prompt(db: State<DbPool>, input: CreatePromptInput) -> AppResult<P
     update_fts(&conn, &id)?;
 
     let prompt: Prompt = conn.query_row(
-        "SELECT id, folder_id, title, description, created_at, updated_at
+        "SELECT id, folder_id, title, description, created_at, updated_at,
+                view_prefs, git_workspace_id
          FROM prompts WHERE id = ?1",
         params![id],
         row_to_prompt,
@@ -338,6 +356,12 @@ pub struct UpdatePromptInput {
     pub title: Option<String>,
     pub description: Option<String>,
     pub folder_id: Option<String>,
+    /// JSON blob of UI preferences (color-by, etc.). Epic 3.
+    #[serde(default)]
+    pub view_prefs: Option<serde_json::Value>,
+    /// Link this prompt to a Git workspace, or `null` to unlink. Epic 2.
+    #[serde(default)]
+    pub git_workspace_id: Option<Option<String>>,
 }
 
 #[tauri::command]
@@ -360,6 +384,22 @@ pub fn update_prompt(db: State<DbPool>, input: UpdatePromptInput) -> AppResult<(
         conn.execute(
             "UPDATE prompts SET folder_id = ?1, updated_at = ?2 WHERE id = ?3",
             params![fid, now, input.id],
+        )?;
+    }
+    if let Some(view_prefs) = &input.view_prefs {
+        // `view_prefs` is a JSON value; we persist it as a text blob so we can
+        // add more fields without migrations. See Epic 3.
+        let serialized = serde_json::to_string(view_prefs)?;
+        conn.execute(
+            "UPDATE prompts SET view_prefs = ?1, updated_at = ?2 WHERE id = ?3",
+            params![serialized, now, input.id],
+        )?;
+    }
+    if let Some(workspace_opt) = &input.git_workspace_id {
+        // `Some(Some(id))` → link, `Some(None)` → unlink. `None` → leave alone.
+        conn.execute(
+            "UPDATE prompts SET git_workspace_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![workspace_opt, now, input.id],
         )?;
     }
     update_fts(&conn, &input.id)?;
@@ -542,6 +582,10 @@ pub fn list_revisions(db: State<DbPool>, prompt_id: String) -> AppResult<Vec<Rev
 }
 
 fn row_to_output(row: &Row) -> rusqlite::Result<RevisionOutput> {
+    let run_group_id = row
+        .get::<_, Option<String>>("run_group_id")
+        .ok()
+        .flatten();
     Ok(RevisionOutput {
         id: row.get("id")?,
         revision_id: row.get("revision_id")?,
@@ -553,6 +597,7 @@ fn row_to_output(row: &Row) -> rusqlite::Result<RevisionOutput> {
         created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>("created_at")?)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
+        run_group_id,
     })
 }
 
@@ -562,13 +607,19 @@ pub struct CreateOutputInput {
     pub label: Option<String>,
     pub content: String,
     pub notes: Option<String>,
+    /// Optional group id linking outputs from the same multi-run /
+    /// multi-provider click (Epics 5 & 6). Defaults to None for
+    /// one-off single runs.
+    #[serde(default)]
+    pub run_group_id: Option<String>,
 }
 
 #[tauri::command]
 pub fn list_outputs(db: State<DbPool>, revision_id: String) -> AppResult<Vec<RevisionOutput>> {
     let conn = db.lock();
     let mut stmt = conn.prepare(
-        "SELECT id, revision_id, label, content, notes, rating, sort_order, created_at
+        "SELECT id, revision_id, label, content, notes, rating, sort_order, created_at,
+                run_group_id
          FROM revision_outputs
          WHERE revision_id = ?1
          ORDER BY sort_order ASC, created_at ASC",
@@ -593,8 +644,9 @@ pub fn create_output(db: State<DbPool>, input: CreateOutputInput) -> AppResult<R
     )?;
 
     conn.execute(
-        "INSERT INTO revision_outputs (id, revision_id, label, content, notes, rating, sort_order, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7)",
+        "INSERT INTO revision_outputs (id, revision_id, label, content, notes, rating,
+                                       sort_order, created_at, run_group_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8)",
         params![
             id,
             input.revision_id,
@@ -602,7 +654,8 @@ pub fn create_output(db: State<DbPool>, input: CreateOutputInput) -> AppResult<R
             input.content,
             input.notes,
             sort_order,
-            now
+            now,
+            input.run_group_id,
         ],
     )?;
 
@@ -615,6 +668,7 @@ pub fn create_output(db: State<DbPool>, input: CreateOutputInput) -> AppResult<R
         rating: None,
         sort_order,
         created_at: parse_dt(now)?,
+        run_group_id: input.run_group_id,
     })
 }
 
@@ -913,7 +967,8 @@ pub fn list_recent_prompts(db: State<DbPool>, limit: Option<i64>) -> AppResult<V
     let conn = db.lock();
     let lim = limit.unwrap_or(20);
     let mut stmt = conn.prepare(
-        "SELECT id, folder_id, title, description, created_at, updated_at
+        "SELECT id, folder_id, title, description, created_at, updated_at,
+                view_prefs, git_workspace_id
          FROM prompts ORDER BY updated_at DESC LIMIT ?1",
     )?;
     let prompts: Vec<Prompt> = stmt
@@ -934,7 +989,8 @@ pub fn list_flagged_prompts(db: State<DbPool>) -> AppResult<Vec<PromptWithLatest
     let conn = db.lock();
     // A prompt is "flagged" if any of its revisions is flagged
     let mut stmt = conn.prepare(
-        "SELECT DISTINCT p.id, p.folder_id, p.title, p.description, p.created_at, p.updated_at
+        "SELECT DISTINCT p.id, p.folder_id, p.title, p.description, p.created_at, p.updated_at,
+                        p.view_prefs, p.git_workspace_id
          FROM prompts p
          JOIN revisions r ON r.prompt_id = p.id
          WHERE r.flagged = 1
@@ -1001,7 +1057,8 @@ pub fn duplicate_prompt(db: State<DbPool>, prompt_id: String) -> AppResult<Promp
 
     // Copy prompt
     let src: Prompt = conn.query_row(
-        "SELECT id, folder_id, title, description, created_at, updated_at
+        "SELECT id, folder_id, title, description, created_at, updated_at,
+                view_prefs, git_workspace_id
          FROM prompts WHERE id = ?1",
         params![prompt_id],
         row_to_prompt,
@@ -1056,7 +1113,8 @@ pub fn duplicate_prompt(db: State<DbPool>, prompt_id: String) -> AppResult<Promp
 
     // Return the new prompt
     let prompt: Prompt = conn.query_row(
-        "SELECT id, folder_id, title, description, created_at, updated_at
+        "SELECT id, folder_id, title, description, created_at, updated_at,
+                view_prefs, git_workspace_id
          FROM prompts WHERE id = ?1",
         params![new_id],
         row_to_prompt,
@@ -1276,6 +1334,13 @@ pub struct SaveTraceInput {
     pub status: Option<String>,
     pub error: Option<String>,
     pub metadata: Option<String>,
+    /// Shared id across traces produced by a single multi-run or multi-provider
+    /// click; lets Analytics and the tracing viewer group them (Epics 5 & 6).
+    #[serde(default)]
+    pub run_group_id: Option<String>,
+    /// 'live' (default), 'manual' (user pasted), or 'imported'. See Epic 4.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 #[tauri::command]
@@ -1285,13 +1350,15 @@ pub fn save_trace(db: State<DbPool>, input: SaveTraceInput) -> AppResult<String>
     let now = now_string();
     conn.execute(
         "INSERT INTO traces (id, prompt_id, revision_id, provider, model, input_messages, output,
-                             input_tokens, output_tokens, latency_ms, cost_usd, status, error, metadata, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                             input_tokens, output_tokens, latency_ms, cost_usd, status, error,
+                             metadata, run_group_id, source, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         params![
             id, input.prompt_id, input.revision_id, input.provider, input.model,
             input.input_messages, input.output, input.input_tokens, input.output_tokens,
             input.latency_ms, input.cost_usd, input.status.unwrap_or_else(|| "success".into()),
-            input.error, input.metadata, now
+            input.error, input.metadata, input.run_group_id,
+            input.source.unwrap_or_else(|| "live".into()), now
         ],
     )?;
     Ok(id)
@@ -1309,14 +1376,14 @@ pub fn list_traces(
     let (sql, param_val): (String, Option<String>) = if let Some(pid) = prompt_id {
         (
             "SELECT id, prompt_id, revision_id, provider, model, input_tokens, output_tokens,
-                    latency_ms, cost_usd, status, error, created_at
+                    latency_ms, cost_usd, status, error, created_at, run_group_id, source
              FROM traces WHERE prompt_id = ?1 ORDER BY created_at DESC LIMIT ?2".into(),
             Some(pid),
         )
     } else {
         (
             "SELECT id, prompt_id, revision_id, provider, model, input_tokens, output_tokens,
-                    latency_ms, cost_usd, status, error, created_at
+                    latency_ms, cost_usd, status, error, created_at, run_group_id, source
              FROM traces ORDER BY created_at DESC LIMIT ?1".into(),
             None,
         )
@@ -1339,6 +1406,8 @@ pub fn list_traces(
                 "status": r.get::<_, String>(9)?,
                 "error": r.get::<_, Option<String>>(10)?,
                 "created_at": r.get::<_, String>(11)?,
+                "run_group_id": r.get::<_, Option<String>>(12)?,
+                "source": r.get::<_, String>(13)?,
             }))
         })?;
         for r in rows { out.push(r?); }
@@ -1358,6 +1427,8 @@ pub fn list_traces(
                 "status": r.get::<_, String>(9)?,
                 "error": r.get::<_, Option<String>>(10)?,
                 "created_at": r.get::<_, String>(11)?,
+                "run_group_id": r.get::<_, Option<String>>(12)?,
+                "source": r.get::<_, String>(13)?,
             }))
         })?;
         for r in rows { out.push(r?); }
@@ -1432,7 +1503,8 @@ pub struct ExportInput {
 pub fn export_prompt_to_file(db: State<DbPool>, input: ExportInput) -> AppResult<()> {
     let conn = db.lock();
     let prompt: Prompt = conn.query_row(
-        "SELECT id, folder_id, title, description, created_at, updated_at
+        "SELECT id, folder_id, title, description, created_at, updated_at,
+                view_prefs, git_workspace_id
          FROM prompts WHERE id = ?1",
         params![input.prompt_id],
         row_to_prompt,

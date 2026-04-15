@@ -9,6 +9,7 @@ import {
   type RunStats,
   type ChatMessage,
 } from "../lib/providers";
+import { estimateCostUsd } from "../lib/pricing";
 import * as api from "../api";
 
 export function PlaygroundPanel() {
@@ -101,7 +102,13 @@ export function PlaygroundPanel() {
                 notes: `${s.duration_ms}ms · ${s.total_tokens} tokens`,
               });
             }
-            // Save trace for observability
+            // Save trace for observability — always stamp cost so Analytics
+            // can compare spend across providers (local/unknown → 0).
+            const costUsd = estimateCostUsd(
+              selectedModel.id,
+              s.prompt_tokens,
+              s.completion_tokens,
+            );
             await api.saveTrace({
               prompt_id: promptId,
               revision_id: revisionId,
@@ -112,7 +119,9 @@ export function PlaygroundPanel() {
               input_tokens: s.prompt_tokens || null,
               output_tokens: s.completion_tokens || null,
               latency_ms: s.duration_ms,
+              cost_usd: costUsd,
               status: "success",
+              source: "live",
             });
           } catch {
             // trace save failure is non-critical

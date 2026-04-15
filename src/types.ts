@@ -12,6 +12,12 @@ export interface Folder {
   created_at: string;
 }
 
+export interface PromptViewPrefs {
+  /** Epic 3 — how the revision list is coloured. */
+  colorBy?: "rating" | "model" | "flagged" | "none";
+  [key: string]: unknown;
+}
+
 export interface Prompt {
   id: string;
   folder_id: string | null;
@@ -19,6 +25,10 @@ export interface Prompt {
   description: string | null;
   created_at: string;
   updated_at: string;
+  /** Epic 3 — UI view preferences as a JSON blob. */
+  view_prefs?: PromptViewPrefs | null;
+  /** Epic 2 — linked Git workspace, if any. */
+  git_workspace_id?: string | null;
 }
 
 export interface Revision {
@@ -44,7 +54,27 @@ export interface RevisionOutput {
   rating: number | null;
   sort_order: number;
   created_at: string;
+  /** Epics 5 & 6 — groups outputs produced by a single multi-run click. */
+  run_group_id?: string | null;
 }
+
+/** Epic 2 — a local Git repository linked for prompt sync. */
+export interface GitWorkspace {
+  id: string;
+  name: string;
+  path: string;
+  push_policy: "manual" | "on_commit" | "interval";
+  push_interval_seconds: number | null;
+  default_remote: string;
+  default_branch: string;
+  last_push_at: string | null;
+  last_pull_at: string | null;
+  last_error: string | null;
+  created_at: string;
+}
+
+/** Source of a trace row — distinguishes real provider calls from manual entry. */
+export type TraceSource = "live" | "manual" | "imported";
 
 export interface PromptWithLatest {
   prompt: Prompt;

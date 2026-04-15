@@ -107,6 +107,23 @@ export function formatCost(usd: number): string {
 }
 
 /**
+ * Cost-write helper: always returns a number so the trace layer can safely
+ * populate `cost_usd` for every run (local → 0, unknown → 0, cloud → computed).
+ * Used by the Playground, multi-run, and multi-provider fan-out paths so the
+ * analytics screen can compare spend across providers without gaps.
+ */
+export function estimateCostUsd(
+  model: string,
+  inputTokens: number | null | undefined,
+  outputTokens: number | null | undefined,
+): number {
+  if (!model) return 0;
+  if (isLocalModel(model)) return 0;
+  const hit = estimateCost(model, inputTokens ?? 0, outputTokens ?? 0);
+  return hit?.total ?? 0;
+}
+
+/**
  * Check if a model name likely refers to a local model (Ollama/LM Studio).
  * Strategy: if the model is in our cloud PRICING table, it's NOT local.
  * Ollama models use "model:tag" format (e.g. llama3:latest).

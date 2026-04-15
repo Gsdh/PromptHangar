@@ -4,11 +4,13 @@ import type {
   AppMode,
   ChainWithSteps,
   Folder,
+  PromptViewPrefs,
   PromptWithLatest,
   Revision,
   RevisionOutput,
   SearchHit,
   Theme,
+  TraceSource,
 } from "./types";
 
 // ---------- Folders ----------
@@ -64,6 +66,13 @@ export function updatePrompt(input: {
   title?: string;
   description?: string;
   folder_id?: string;
+  /** Epic 3 — UI view preferences. Serialized server-side. */
+  view_prefs?: PromptViewPrefs;
+  /**
+   * Epic 2 — link/unlink to a Git workspace.
+   * `undefined` = leave unchanged, `null` = unlink, string = link to that id.
+   */
+  git_workspace_id?: string | null;
 }): Promise<void> {
   return invoke("update_prompt", { input });
 }
@@ -122,6 +131,8 @@ export function createOutput(input: {
   label?: string | null;
   content: string;
   notes?: string | null;
+  /** Epics 5 & 6 — tie this output to a multi-run / multi-provider batch. */
+  run_group_id?: string | null;
 }): Promise<RevisionOutput> {
   return invoke("create_output", { input });
 }
@@ -213,11 +224,15 @@ export function saveTrace(input: {
   status?: string;
   error?: string | null;
   metadata?: string | null;
+  /** Epics 5 & 6 — groups traces from one fan-out click. */
+  run_group_id?: string | null;
+  /** Epic 4 — 'live' (default), 'manual', or 'imported'. */
+  source?: TraceSource;
 }): Promise<string> {
   return invoke("save_trace", { input });
 }
 
-export function listTraces(promptId?: string | null, limit?: number): Promise<{
+export interface TraceRow {
   id: string;
   prompt_id: string | null;
   revision_id: string | null;
@@ -230,7 +245,11 @@ export function listTraces(promptId?: string | null, limit?: number): Promise<{
   status: string;
   error: string | null;
   created_at: string;
-}[]> {
+  run_group_id: string | null;
+  source: TraceSource;
+}
+
+export function listTraces(promptId?: string | null, limit?: number): Promise<TraceRow[]> {
   return invoke("list_traces", { promptId: promptId ?? null, limit: limit ?? 100 });
 }
 

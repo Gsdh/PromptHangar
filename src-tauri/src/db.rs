@@ -16,6 +16,8 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/005_chains.sql"),
     include_str!("../migrations/006_eval_scores.sql"),
     include_str!("../migrations/007_branching_envs_tracing.sql"),
+    include_str!("../migrations/008_multi_run_and_view_prefs.sql"),
+    include_str!("../migrations/009_git_workspaces.sql"),
 ];
 
 pub fn init(db_path: &Path) -> AppResult<DbPool> {
