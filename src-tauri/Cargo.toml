@@ -28,7 +28,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 thiserror = "2"
-directories = "5"
+directories = "6"
 parking_lot = "0.12"
 rfd = "0.15"
 axum = "0.8.8"
