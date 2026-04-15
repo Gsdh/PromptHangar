@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { X, PenLine, Terminal, WifiOff, Sun, Moon, Smartphone, BookOpen, Settings as SettingsIcon, Cloud, Check, Eye, EyeOff, Key, GitBranch, Plus, Trash2, FolderOpen } from "lucide-react";
+import { X, PenLine, Terminal, WifiOff, Sun, Moon, Smartphone, BookOpen, Settings as SettingsIcon, Cloud, Check, Eye, EyeOff, Key, GitBranch, Plus, Trash2, FolderOpen, Lock, Unlock, Shield } from "lucide-react";
 import clsx from "clsx";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "../api";
@@ -10,9 +10,11 @@ import { toast } from "./Toast";
 
 interface Props {
   onClose: () => void;
+  security?: api.SecurityStatus | null;
+  onSecurityChange?: () => Promise<api.SecurityStatus>;
 }
 
-export function SettingsModal({ onClose }: Props) {
+export function SettingsModal({ onClose, security, onSecurityChange }: Props) {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
 
@@ -228,6 +230,17 @@ export function SettingsModal({ onClose }: Props) {
             description="Mirror selected prompts to a local Git repository. Each save writes a markdown file and creates a commit. Pushing to a remote is still up to you."
           >
             <GitWorkspacesManager />
+          </Section>
+
+          {/* Security (Epic 10) */}
+          <Section
+            title="Security"
+            description="Optional master password. Stored locally as an Argon2id hash — never leaves this machine. Keep in mind: setting this does not encrypt your database; it just keeps the UI behind a lock screen."
+          >
+            <SecuritySettings
+              security={security ?? null}
+              onChange={onSecurityChange}
+            />
           </Section>
 
           {/* About */}
@@ -507,6 +520,361 @@ function GitWorkspacesManager() {
       <div className="text-[9px] text-[var(--color-text-muted)]">
         If the folder isn't already a Git repository we'll run <code className="font-mono">git init</code> for you.
       </div>
+    </div>
+  );
+}
+
+// ==================== Epic 10 — Security section ====================
+
+function SecuritySettings({
+  security,
+  onChange,
+}: {
+  security: api.SecurityStatus | null;
+  onChange?: () => Promise<api.SecurityStatus>;
+}) {
+  if (!security) {
+    return (
+      <div className="text-xs text-[var(--color-text-muted)]">Loading…</div>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      {security.has_password ? (
+        <PasswordSetPanel onChange={onChange} timeoutMin={security.lock_timeout_min} />
+      ) : (
+        <PasswordUnsetPanel onChange={onChange} />
+      )}
+    </div>
+  );
+}
+
+function PasswordUnsetPanel({
+  onChange,
+}: {
+  onChange?: () => Promise<api.SecurityStatus>;
+}) {
+  const [newPw, setNewPw] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [show, setShow] = useState(false);
+
+  const tooShort = newPw.length > 0 && newPw.length < 6;
+  const mismatch = confirm.length > 0 && confirm !== newPw;
+  const canSubmit = !busy && newPw.length >= 6 && !mismatch;
+
+  async function submit() {
+    if (!canSubmit) return;
+    setBusy(true);
+    try {
+      await api.setMasterPassword({
+        old_password: null,
+        new_password: newPw,
+      });
+      toast("Master password set", "success");
+      setNewPw("");
+      setConfirm("");
+      await onChange?.();
+    } catch (e) {
+      toast(`Could not set password: ${String(e)}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2 p-3 rounded border border-[var(--color-border)] bg-[var(--color-bg)]">
+      <div className="text-xs font-medium flex items-center gap-1.5">
+        <Shield size={12} className="text-[var(--color-text-muted)]" />
+        Set a master password
+      </div>
+      <PasswordField
+        value={newPw}
+        onChange={setNewPw}
+        show={show}
+        onToggleShow={() => setShow((s) => !s)}
+        placeholder="New password (≥ 6 chars)"
+        autoFocus
+      />
+      <PasswordField
+        value={confirm}
+        onChange={setConfirm}
+        show={show}
+        onToggleShow={() => setShow((s) => !s)}
+        placeholder="Confirm password"
+      />
+      {tooShort && (
+        <div className="text-[10px] text-red-500">Must be at least 6 characters.</div>
+      )}
+      {mismatch && (
+        <div className="text-[10px] text-red-500">Passwords don't match.</div>
+      )}
+      <button
+        type="button"
+        onClick={() => void submit()}
+        disabled={!canSubmit}
+        className="px-3 py-1.5 rounded bg-[var(--color-accent)] text-white text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90"
+      >
+        {busy ? "Saving…" : "Set password"}
+      </button>
+    </div>
+  );
+}
+
+function PasswordSetPanel({
+  onChange,
+  timeoutMin,
+}: {
+  onChange?: () => Promise<api.SecurityStatus>;
+  timeoutMin: number;
+}) {
+  const [mode, setMode] = useState<"idle" | "change" | "remove">("idle");
+  const [oldPw, setOldPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [show, setShow] = useState(false);
+
+  function reset() {
+    setMode("idle");
+    setOldPw("");
+    setNewPw("");
+    setConfirm("");
+  }
+
+  async function lockNow() {
+    try {
+      await api.lockApp();
+      await onChange?.();
+    } catch (e) {
+      toast(`Could not lock: ${String(e)}`, "error");
+    }
+  }
+
+  async function changePw() {
+    if (newPw.length < 6 || newPw !== confirm || !oldPw) return;
+    setBusy(true);
+    try {
+      await api.setMasterPassword({
+        old_password: oldPw,
+        new_password: newPw,
+      });
+      toast("Password updated", "success");
+      reset();
+      await onChange?.();
+    } catch (e) {
+      toast(`Could not update: ${String(e)}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removePw() {
+    if (!oldPw) return;
+    setBusy(true);
+    try {
+      await api.clearMasterPassword(oldPw);
+      toast("Master password removed", "success");
+      reset();
+      await onChange?.();
+    } catch (e) {
+      toast(`Could not remove: ${String(e)}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 p-2.5 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-xs">
+        <Shield size={12} className="text-[var(--color-accent)]" />
+        <span className="flex-1">Master password is active</span>
+        <button
+          type="button"
+          onClick={() => void lockNow()}
+          className="px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-bg-subtle)] flex items-center gap-1 text-[10px]"
+          title="Lock now"
+        >
+          <Lock size={10} /> Lock now
+        </button>
+      </div>
+
+      {/* Idle-timeout */}
+      <TimeoutPicker currentMin={timeoutMin} onChange={onChange} />
+
+      {/* Change / remove buttons */}
+      {mode === "idle" && (
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setMode("change")}
+            className="px-2.5 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-bg-subtle)] text-[11px] font-medium"
+          >
+            Change password…
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("remove")}
+            className="px-2.5 py-1 rounded border border-[var(--color-border)] hover:bg-red-500/10 hover:text-red-500 hover:border-red-500/50 text-[11px] font-medium"
+          >
+            <Unlock size={10} className="inline mr-1" />
+            Remove password…
+          </button>
+        </div>
+      )}
+
+      {mode === "change" && (
+        <div className="space-y-2 p-3 rounded border border-[var(--color-border)] bg-[var(--color-bg)]">
+          <div className="text-xs font-medium">Change master password</div>
+          <PasswordField value={oldPw} onChange={setOldPw} show={show} onToggleShow={() => setShow((s) => !s)} placeholder="Current password" autoFocus />
+          <PasswordField value={newPw} onChange={setNewPw} show={show} onToggleShow={() => setShow((s) => !s)} placeholder="New password (≥ 6 chars)" />
+          <PasswordField value={confirm} onChange={setConfirm} show={show} onToggleShow={() => setShow((s) => !s)} placeholder="Confirm new password" />
+          {confirm && confirm !== newPw && (
+            <div className="text-[10px] text-red-500">Passwords don't match.</div>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void changePw()}
+              disabled={busy || newPw.length < 6 || newPw !== confirm || !oldPw}
+              className="px-3 py-1.5 rounded bg-[var(--color-accent)] text-white text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90"
+            >
+              {busy ? "Updating…" : "Update"}
+            </button>
+            <button
+              type="button"
+              onClick={reset}
+              className="px-3 py-1.5 rounded border border-[var(--color-border)] text-xs hover:bg-[var(--color-bg-subtle)]"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {mode === "remove" && (
+        <div className="space-y-2 p-3 rounded border border-red-500/40 bg-red-500/5">
+          <div className="text-xs font-medium text-red-500">Remove master password</div>
+          <div className="text-[10px] text-[var(--color-text-muted)]">
+            Anyone with access to this machine will be able to open the app without entering a password.
+          </div>
+          <PasswordField value={oldPw} onChange={setOldPw} show={show} onToggleShow={() => setShow((s) => !s)} placeholder="Current password" autoFocus />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void removePw()}
+              disabled={busy || !oldPw}
+              className="px-3 py-1.5 rounded bg-red-500 text-white text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90"
+            >
+              {busy ? "Removing…" : "Remove password"}
+            </button>
+            <button
+              type="button"
+              onClick={reset}
+              className="px-3 py-1.5 rounded border border-[var(--color-border)] text-xs hover:bg-[var(--color-bg-subtle)]"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TimeoutPicker({
+  currentMin,
+  onChange,
+}: {
+  currentMin: number;
+  onChange?: () => Promise<api.SecurityStatus>;
+}) {
+  const OPTIONS: Array<{ label: string; minutes: number }> = [
+    { label: "Off", minutes: 0 },
+    { label: "5 min", minutes: 5 },
+    { label: "15 min", minutes: 15 },
+    { label: "30 min", minutes: 30 },
+    { label: "1 hr", minutes: 60 },
+    { label: "4 hr", minutes: 240 },
+  ];
+
+  async function pick(minutes: number) {
+    try {
+      await api.updateLockTimeout(minutes);
+      await onChange?.();
+      toast(
+        minutes === 0
+          ? "Auto-lock disabled"
+          : `Will lock after ${minutes} min idle`,
+        "success",
+      );
+    } catch (e) {
+      toast(`Could not update timeout: ${String(e)}`, "error");
+    }
+  }
+
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider font-semibold text-[var(--color-text-muted)] mb-1.5">
+        Auto-lock after idle
+      </div>
+      <div className="flex gap-1 flex-wrap">
+        {OPTIONS.map((o) => {
+          const active = o.minutes === currentMin;
+          return (
+            <button
+              key={o.minutes}
+              type="button"
+              onClick={() => void pick(o.minutes)}
+              className={clsx(
+                "px-2.5 py-1 rounded text-[11px] font-medium border",
+                active
+                  ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-white"
+                  : "border-[var(--color-border)] hover:bg-[var(--color-bg-subtle)]",
+              )}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function PasswordField({
+  value,
+  onChange,
+  show,
+  onToggleShow,
+  placeholder,
+  autoFocus,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  show: boolean;
+  onToggleShow: () => void;
+  placeholder: string;
+  autoFocus?: boolean;
+}) {
+  return (
+    <div className="relative">
+      <input
+        type={show ? "text" : "password"}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoFocus={autoFocus}
+        className="w-full bg-[var(--color-bg-elevated)] border border-[var(--color-border)] rounded px-2 py-1.5 text-xs focus:outline-none focus:border-[var(--color-accent)] pr-7"
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={onToggleShow}
+        className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+      >
+        {show ? <EyeOff size={10} /> : <Eye size={10} />}
+      </button>
     </div>
   );
 }

@@ -22,6 +22,7 @@ import { TracingViewer } from "./components/TracingViewer";
 import { HelpGuide } from "./components/HelpGuide";
 import { ToastContainer } from "./components/Toast";
 import { ResizeHandle } from "./components/ResizeHandle";
+import { LockScreen } from "./components/LockScreen";
 
 function App() {
   const bootstrap = useAppStore((s) => s.bootstrap);
@@ -163,12 +164,67 @@ function App() {
 
   const [bootError, setBootError] = useState<string | null>(null);
 
+  // Epic 10 — master-password / lock state.
+  // `null` while the initial status call is in flight so we don't briefly
+  // flash the app UI before the lock screen mounts on startup.
+  const [security, setSecurity] = useState<api.SecurityStatus | null>(null);
+
+  const refreshSecurity = useCallback(async () => {
+    try {
+      const s = await api.securityStatus();
+      setSecurity(s);
+      return s;
+    } catch (err) {
+      console.error("security_status failed", err);
+      // Fallback to a sane default so the app still boots if this somehow
+      // fails — worse to brick the UI than to not have a lock screen.
+      const fallback: api.SecurityStatus = {
+        has_password: false,
+        is_locked: false,
+        lock_timeout_min: 15,
+      };
+      setSecurity(fallback);
+      return fallback;
+    }
+  }, []);
+
   useEffect(() => {
     bootstrap().catch((err) => {
       console.error("bootstrap failed", err);
       setBootError(String(err));
     });
-  }, [bootstrap]);
+    void refreshSecurity();
+  }, [bootstrap, refreshSecurity]);
+
+  // Idle-timeout auto-lock. Reset a timer on every user interaction; when
+  // it fires without interaction, flip the lock.  Only arms when a password
+  // is set and the timeout is > 0.
+  useEffect(() => {
+    if (!security?.has_password) return;
+    const minutes = security.lock_timeout_min;
+    if (!minutes || minutes <= 0) return;
+    const ms = minutes * 60 * 1000;
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    function reset() {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(async () => {
+        try {
+          await api.lockApp();
+          await refreshSecurity();
+        } catch (err) {
+          console.error("auto-lock failed", err);
+        }
+      }, ms);
+    }
+    reset();
+    const events = ["mousemove", "mousedown", "keydown", "touchstart", "wheel"];
+    for (const evt of events) window.addEventListener(evt, reset, { passive: true });
+    return () => {
+      if (timer) clearTimeout(timer);
+      for (const evt of events) window.removeEventListener(evt, reset);
+    };
+  }, [security?.has_password, security?.lock_timeout_min, refreshSecurity]);
 
   // Global shortcuts
   useEffect(() => {
@@ -427,7 +483,13 @@ function App() {
 
       {showFirstRun && <FirstRunModal onComplete={() => setTourOpen(true)} />}
       {tourOpen && <OnboardingTour onClose={() => setTourOpen(false)} />}
-      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <SettingsModal
+          onClose={() => setSettingsOpen(false)}
+          security={security}
+          onSecurityChange={refreshSecurity}
+        />
+      )}
       {importOpen && <ImportModal onClose={() => setImportOpen(false)} />}
       {shortcutsOpen && (
         <ShortcutsHelp onClose={() => setShortcutsOpen(false)} />
@@ -439,6 +501,9 @@ function App() {
       {abTestOpen && <ABTestModal onClose={() => setAbTestOpen(false)} />}
       {tracingOpen && <TracingViewer onClose={() => setTracingOpen(false)} />}
       {helpOpen && <HelpGuide onClose={() => setHelpOpen(false)} />}
+      {security?.is_locked && (
+        <LockScreen onUnlock={() => void refreshSecurity()} />
+      )}
       <ToastContainer />
     </div>
   );

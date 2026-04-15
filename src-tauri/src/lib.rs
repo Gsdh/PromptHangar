@@ -3,6 +3,7 @@ mod db;
 mod error;
 mod git;
 mod models;
+mod security;
 mod server;
 
 use directories::ProjectDirs;
@@ -41,6 +42,14 @@ pub fn run() {
 
     let pool_for_server = pool.clone();
 
+    // Seed the in-memory lock flag from what's in the DB. Locked if a
+    // password exists, unlocked otherwise. Startup must always re-prompt
+    // when a password is set — that's the point of having one.
+    let locked = security::init_from_db(&pool).unwrap_or_else(|e| {
+        eprintln!("security init failed, defaulting to unlocked: {e}");
+        security::AppLocked::new(false)
+    });
+
     tauri::Builder::default()
         .setup(move |_app| {
             server::start_server(pool_for_server);
@@ -50,6 +59,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(pool)
+        .manage(locked)
         .invoke_handler(tauri::generate_handler![
             // folders
             commands::list_folders,
@@ -131,6 +141,13 @@ pub fn run() {
             // bundles (Epic 9)
             commands::export_prompt_bundle,
             commands::import_prompt_bundle,
+            // security (Epic 10)
+            commands::security_status,
+            commands::set_master_password,
+            commands::verify_master_password,
+            commands::clear_master_password,
+            commands::lock_app,
+            commands::update_lock_timeout,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

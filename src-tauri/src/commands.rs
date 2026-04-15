@@ -2,6 +2,7 @@ use crate::db::{update_fts, DbPool};
 use crate::error::{AppError, AppResult};
 use crate::git;
 use crate::models::{Chain, ChainStep, ChainWithSteps, Folder, GitWorkspace, Prompt, PromptWithLatest, Revision, RevisionOutput, SearchHit};
+use crate::security::{self, AppLocked};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Row};
 use serde::{Deserialize, Serialize};
@@ -2813,4 +2814,177 @@ pub fn import_prompt_bundle(
 
     tx.commit()?;
     Ok(result)
+}
+
+// ==================== Epic 10 — master password + idle lock ====================
+
+/// Shape reported to the UI so it can decide whether to show the lock
+/// screen, the "set password" prompt, or nothing at all.
+#[derive(Debug, Clone, Serialize)]
+pub struct SecurityStatus {
+    pub has_password: bool,
+    pub is_locked: bool,
+    pub lock_timeout_min: i64,
+}
+
+#[tauri::command]
+pub fn security_status(
+    db: State<DbPool>,
+    locked: State<AppLocked>,
+) -> AppResult<SecurityStatus> {
+    let conn = db.lock();
+    let (phc, timeout): (Option<String>, i64) = conn.query_row(
+        "SELECT password_phc, lock_timeout_min FROM app_security WHERE id = 1",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let has_pw = phc.is_some();
+    // If no password is set, the lock flag is meaningless — force it false
+    // so stale state from a previous password doesn't trap the UI.
+    let is_locked = has_pw && locked.is_locked();
+    Ok(SecurityStatus {
+        has_password: has_pw,
+        is_locked,
+        lock_timeout_min: timeout,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetPasswordInput {
+    /// Required iff a password is already set — proves the caller knew the
+    /// old one before replacing it.
+    pub old_password: Option<String>,
+    pub new_password: String,
+}
+
+#[tauri::command]
+pub fn set_master_password(
+    db: State<DbPool>,
+    locked: State<AppLocked>,
+    input: SetPasswordInput,
+) -> AppResult<()> {
+    if input.new_password.is_empty() {
+        return Err(AppError::Invalid("password cannot be empty".into()));
+    }
+    if input.new_password.len() < 6 {
+        return Err(AppError::Invalid(
+            "password must be at least 6 characters".into(),
+        ));
+    }
+
+    // If a password is already set, require the old one.
+    let existing_phc = security::get_phc(&db)?;
+    if let Some(phc) = existing_phc {
+        let old = input
+            .old_password
+            .as_deref()
+            .ok_or_else(|| AppError::Invalid("old password required".into()))?;
+        if !security::verify_password(old, &phc)? {
+            return Err(AppError::Invalid("old password is incorrect".into()));
+        }
+    }
+
+    let new_phc = security::hash_password(&input.new_password)?;
+    {
+        let conn = db.lock();
+        conn.execute(
+            "UPDATE app_security SET password_phc = ?1, updated_at = ?2 WHERE id = 1",
+            params![new_phc, now_string()],
+        )?;
+    }
+    // Setting a password for the first time leaves the app unlocked — we
+    // just established the credential, the user shouldn't be locked out
+    // immediately.  Rotating while already unlocked also stays unlocked.
+    locked.set_locked(false);
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VerifyPasswordInput {
+    pub password: String,
+}
+
+/// Called by the LockScreen. Returns true iff the password matches the
+/// stored PHC; clears the locked flag on success.
+#[tauri::command]
+pub fn verify_master_password(
+    db: State<DbPool>,
+    locked: State<AppLocked>,
+    input: VerifyPasswordInput,
+) -> AppResult<bool> {
+    let phc = match security::get_phc(&db)? {
+        Some(p) => p,
+        // No password set — nothing to verify against.  Don't flip the lock
+        // either; the UI shouldn't be calling this in that case.
+        None => return Ok(false),
+    };
+    let ok = security::verify_password(&input.password, &phc)?;
+    if ok {
+        locked.set_locked(false);
+    }
+    Ok(ok)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ClearPasswordInput {
+    pub password: String,
+}
+
+/// Remove the password. Requires the current password to prevent someone
+/// who briefly got access to an unlocked machine from disabling the lock.
+#[tauri::command]
+pub fn clear_master_password(
+    db: State<DbPool>,
+    locked: State<AppLocked>,
+    input: ClearPasswordInput,
+) -> AppResult<()> {
+    let phc = security::get_phc(&db)?
+        .ok_or_else(|| AppError::Invalid("no password is set".into()))?;
+    if !security::verify_password(&input.password, &phc)? {
+        return Err(AppError::Invalid("password is incorrect".into()));
+    }
+    {
+        let conn = db.lock();
+        conn.execute(
+            "UPDATE app_security SET password_phc = NULL, updated_at = ?1 WHERE id = 1",
+            params![now_string()],
+        )?;
+    }
+    locked.set_locked(false);
+    Ok(())
+}
+
+/// Manually re-lock the app. No-op when no password is set.
+#[tauri::command]
+pub fn lock_app(db: State<DbPool>, locked: State<AppLocked>) -> AppResult<()> {
+    if security::has_password(&db)? {
+        locked.set_locked(true);
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateLockTimeoutInput {
+    /// Idle minutes before auto-lock. `0` disables idle locking. Must be
+    /// non-negative and ≤ 1440 (24h) to avoid a user accidentally setting
+    /// something absurd.
+    pub minutes: i64,
+}
+
+#[tauri::command]
+pub fn update_lock_timeout(
+    db: State<DbPool>,
+    input: UpdateLockTimeoutInput,
+) -> AppResult<()> {
+    if input.minutes < 0 || input.minutes > 1440 {
+        return Err(AppError::Invalid(
+            "lock timeout must be between 0 and 1440 minutes".into(),
+        ));
+    }
+    let conn = db.lock();
+    conn.execute(
+        "UPDATE app_security SET lock_timeout_min = ?1, updated_at = ?2 WHERE id = 1",
+        params![input.minutes, now_string()],
+    )?;
+    Ok(())
 }

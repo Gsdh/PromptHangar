@@ -517,3 +517,46 @@ export function importPromptBundle(input: {
 }): Promise<ImportBundleResult> {
   return invoke("import_prompt_bundle", { input });
 }
+
+// ---------- Security (Epic 10) ----------
+
+export interface SecurityStatus {
+  has_password: boolean;
+  is_locked: boolean;
+  lock_timeout_min: number;
+}
+
+export function securityStatus(): Promise<SecurityStatus> {
+  return invoke("security_status");
+}
+
+/**
+ * Set or rotate the master password. `old_password` must be supplied when
+ * one is already configured. Backend enforces a 6-char minimum.
+ */
+export function setMasterPassword(input: {
+  old_password?: string | null;
+  new_password: string;
+}): Promise<void> {
+  return invoke("set_master_password", { input });
+}
+
+/** Returns true iff the password matches. Clears the locked flag on success. */
+export function verifyMasterPassword(password: string): Promise<boolean> {
+  return invoke("verify_master_password", { input: { password } });
+}
+
+/** Disables the master password. Requires the current password. */
+export function clearMasterPassword(password: string): Promise<void> {
+  return invoke("clear_master_password", { input: { password } });
+}
+
+/** Flips the in-memory lock flag on. No-op when no password is set. */
+export function lockApp(): Promise<void> {
+  return invoke("lock_app");
+}
+
+/** Set idle-timeout minutes. `0` disables auto-lock. */
+export function updateLockTimeout(minutes: number): Promise<void> {
+  return invoke("update_lock_timeout", { input: { minutes } });
+}
