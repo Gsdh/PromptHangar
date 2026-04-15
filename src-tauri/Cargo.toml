@@ -35,7 +35,7 @@ axum = "0.8.8"
 tokio = { version = "1.51.1", features = ["full", "rt-multi-thread"] }
 # Epic 2 — Git sync. `git2` wraps libgit2 so we can init/commit/push locally
 # without shelling out. `https` + `vendored-openssl` keeps the build portable.
-git2 = { version = "0.19", default-features = false }
+git2 = { version = "0.20", default-features = false }
 # Epic 10 — master password. Argon2id via the PasswordHash PHC string format
 # gives us memory-hard hashing with a self-describing output — no manual
 # salt/params storage. zeroize wipes the password bytes after use.
