@@ -553,6 +553,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
     // Clear the crash-recovery draft since we saved successfully
     try { localStorage.removeItem(`pn:draft:${state.selectedPromptId}`); } catch {}
     toast(`Revision #${rev.revision_number} saved`, "success");
+
+    // Epic 2 — if the prompt is linked to a Git workspace, mirror the
+    // revision to disk and commit it. Fire-and-forget so a Git hiccup
+    // never blocks the save path; surface errors via toast.
+    if (active.prompt.git_workspace_id) {
+      void api
+        .commitPromptRevision(state.selectedPromptId, rev.revision_number)
+        .then((oid) => {
+          if (oid) {
+            toast(`Git: committed ${oid.slice(0, 7)}`, "info");
+          }
+        })
+        .catch((e) => {
+          console.error("git commit failed", e);
+          toast(`Git commit failed: ${String(e)}`, "error");
+        });
+    }
     return rev;
   },
   discardDraft() {

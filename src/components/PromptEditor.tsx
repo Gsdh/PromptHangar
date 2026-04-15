@@ -9,6 +9,7 @@ import clsx from "clsx";
 import { useAppStore, useActiveFeatures } from "../store";
 import { MagicCopy } from "./MagicCopy";
 import { ExportButton } from "./ExportButton";
+import { GitSyncMenu } from "./GitSyncMenu";
 import { RevisionDiffViewer } from "./RevisionDiffViewer";
 import { ResultsPanel } from "./ResultsPanel";
 import { TagEditor } from "./TagEditor";
@@ -130,6 +131,7 @@ export function PromptEditor({ sidePanelMode = false }: { sidePanelMode?: boolea
               <Redo2 size={13} />
             </button>
             <div className="w-px h-4 bg-[var(--color-border)] mx-0.5" />
+            <GitSyncMenu />
             <ExportButton />
             <MagicCopy />
             {dirty && (

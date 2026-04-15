@@ -73,6 +73,13 @@ export interface GitWorkspace {
   created_at: string;
 }
 
+/** Working-tree summary for a Git workspace. */
+export interface GitWorkspaceStatus {
+  modified: number;
+  untracked: number;
+  head: string | null;
+}
+
 /** Source of a trace row — distinguishes real provider calls from manual entry. */
 export type TraceSource = "live" | "manual" | "imported";
 

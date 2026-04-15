@@ -1,6 +1,7 @@
 mod commands;
 mod db;
 mod error;
+mod git;
 mod models;
 mod server;
 
@@ -116,6 +117,12 @@ pub fn run() {
             // settings
             commands::get_settings,
             commands::update_settings,
+            // git sync (Epic 2)
+            commands::list_git_workspaces,
+            commands::create_git_workspace,
+            commands::delete_git_workspace,
+            commands::git_workspace_status,
+            commands::commit_prompt_revision,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

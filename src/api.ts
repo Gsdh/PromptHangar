@@ -4,6 +4,8 @@ import type {
   AppMode,
   ChainWithSteps,
   Folder,
+  GitWorkspace,
+  GitWorkspaceStatus,
   PromptViewPrefs,
   PromptWithLatest,
   Revision,
@@ -386,4 +388,40 @@ export function updateSettings(input: {
   theme?: Theme;
 }): Promise<AppSettings> {
   return invoke("update_settings", { input });
+}
+
+// ---------- Git workspaces (Epic 2) ----------
+
+export function listGitWorkspaces(): Promise<GitWorkspace[]> {
+  return invoke("list_git_workspaces");
+}
+
+export function createGitWorkspace(input: {
+  name: string;
+  path: string;
+  push_policy?: string;
+  default_remote?: string;
+  default_branch?: string;
+}): Promise<GitWorkspace> {
+  return invoke("create_git_workspace", { input });
+}
+
+export function deleteGitWorkspace(id: string): Promise<void> {
+  return invoke("delete_git_workspace", { id });
+}
+
+export function gitWorkspaceStatus(id: string): Promise<GitWorkspaceStatus> {
+  return invoke("git_workspace_status", { id });
+}
+
+/**
+ * Commit the given revision of a prompt into its linked Git workspace.
+ * Returns the commit OID, or `null` if the rendered file hadn't changed
+ * since the last commit (idempotent no-op).
+ */
+export function commitPromptRevision(
+  promptId: string,
+  revisionNumber: number
+): Promise<string | null> {
+  return invoke("commit_prompt_revision", { promptId, revisionNumber });
 }

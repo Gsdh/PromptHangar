@@ -1,6 +1,7 @@
 use crate::db::{update_fts, DbPool};
 use crate::error::{AppError, AppResult};
-use crate::models::{Chain, ChainStep, ChainWithSteps, Folder, Prompt, PromptWithLatest, Revision, RevisionOutput, SearchHit};
+use crate::git;
+use crate::models::{Chain, ChainStep, ChainWithSteps, Folder, GitWorkspace, Prompt, PromptWithLatest, Revision, RevisionOutput, SearchHit};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Row};
 use serde::{Deserialize, Serialize};
@@ -1842,4 +1843,205 @@ pub fn update_settings(db: State<DbPool>, input: UpdateSettingsInput) -> AppResu
         }
     }
     get_settings(db)
+}
+
+// ---------- Git workspaces (Epic 2) ----------
+//
+// A `git_workspace` row is metadata about a local Git repository the user
+// has nominated as a mirror target for prompts. The heavy lifting (init,
+// commit, status) lives in `crate::git`; these commands are thin glue that
+// look up the row, hand the path to `crate::git`, and persist any outcome.
+
+fn row_to_git_workspace(row: &Row) -> rusqlite::Result<GitWorkspace> {
+    Ok(GitWorkspace {
+        id: row.get("id")?,
+        name: row.get("name")?,
+        path: row.get("path")?,
+        push_policy: row.get("push_policy")?,
+        push_interval_seconds: row.get("push_interval_seconds")?,
+        default_remote: row.get("default_remote")?,
+        default_branch: row.get("default_branch")?,
+        last_push_at: row.get("last_push_at")?,
+        last_pull_at: row.get("last_pull_at")?,
+        last_error: row.get("last_error")?,
+        created_at: row.get("created_at")?,
+    })
+}
+
+#[tauri::command]
+pub fn list_git_workspaces(db: State<DbPool>) -> AppResult<Vec<GitWorkspace>> {
+    let conn = db.lock();
+    let mut stmt = conn.prepare(
+        "SELECT id, name, path, push_policy, push_interval_seconds,
+                default_remote, default_branch, last_push_at, last_pull_at,
+                last_error, created_at
+         FROM git_workspaces
+         ORDER BY created_at ASC",
+    )?;
+    let rows = stmt.query_map([], row_to_git_workspace)?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateGitWorkspaceInput {
+    pub name: String,
+    pub path: String,
+    #[serde(default)]
+    pub push_policy: Option<String>,
+    #[serde(default)]
+    pub default_remote: Option<String>,
+    #[serde(default)]
+    pub default_branch: Option<String>,
+}
+
+#[tauri::command]
+pub fn create_git_workspace(
+    db: State<DbPool>,
+    input: CreateGitWorkspaceInput,
+) -> AppResult<GitWorkspace> {
+    // Validate + canonicalise the path (and `git init` if necessary) before
+    // we write a row, so we never persist a workspace that can't be opened.
+    let canonical_path = git::validate_workspace_path(&input.path)?;
+
+    let conn = db.lock();
+    let id = Uuid::new_v4().to_string();
+    let now = now_string();
+    let push_policy = input.push_policy.unwrap_or_else(|| "manual".into());
+    let default_remote = input.default_remote.unwrap_or_else(|| "origin".into());
+    let default_branch = input.default_branch.unwrap_or_else(|| "main".into());
+
+    conn.execute(
+        "INSERT INTO git_workspaces
+            (id, name, path, push_policy, push_interval_seconds,
+             default_remote, default_branch, last_push_at, last_pull_at,
+             last_error, created_at)
+         VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, NULL, NULL, NULL, ?7)",
+        params![
+            id,
+            input.name,
+            canonical_path,
+            push_policy,
+            default_remote,
+            default_branch,
+            now,
+        ],
+    )?;
+
+    let ws = conn.query_row(
+        "SELECT id, name, path, push_policy, push_interval_seconds,
+                default_remote, default_branch, last_push_at, last_pull_at,
+                last_error, created_at
+         FROM git_workspaces WHERE id = ?1",
+        params![id],
+        row_to_git_workspace,
+    )?;
+    Ok(ws)
+}
+
+#[tauri::command]
+pub fn delete_git_workspace(db: State<DbPool>, id: String) -> AppResult<()> {
+    let conn = db.lock();
+    // FK on prompts.git_workspace_id has ON DELETE SET NULL so linked
+    // prompts simply get unlinked rather than being cascaded.
+    conn.execute("DELETE FROM git_workspaces WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn git_workspace_status(
+    db: State<DbPool>,
+    id: String,
+) -> AppResult<git::WorkspaceStatus> {
+    let path: String = {
+        let conn = db.lock();
+        conn.query_row(
+            "SELECT path FROM git_workspaces WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => AppError::NotFound("git workspace".into()),
+            other => AppError::Db(other),
+        })?
+    };
+    git::workspace_status(&path)
+}
+
+/// Commit the given revision of a prompt into its linked Git workspace.
+/// Returns the commit OID (hex) on success, or `None` if the rendered
+/// file hadn't changed since the last commit (idempotent no-op).
+#[tauri::command]
+pub fn commit_prompt_revision(
+    db: State<DbPool>,
+    prompt_id: String,
+    revision_number: i64,
+) -> AppResult<Option<String>> {
+    // Resolve everything we need in one lock acquisition so the
+    // subsequent filesystem/libgit2 work runs without holding the
+    // sqlite mutex.
+    let (workspace_path, title, description, content, system_prompt, note) = {
+        let conn = db.lock();
+
+        let (ws_id, title, description): (Option<String>, String, Option<String>) = conn
+            .query_row(
+                "SELECT git_workspace_id, title, description FROM prompts WHERE id = ?1",
+                params![prompt_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => AppError::NotFound("prompt".into()),
+                other => AppError::Db(other),
+            })?;
+
+        let ws_id = ws_id.ok_or_else(|| {
+            AppError::Invalid("prompt is not linked to a Git workspace".into())
+        })?;
+        let workspace_path: String = conn
+            .query_row(
+                "SELECT path FROM git_workspaces WHERE id = ?1",
+                params![ws_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => AppError::NotFound("git workspace".into()),
+                other => AppError::Db(other),
+            })?;
+
+        let (content, system_prompt, note): (String, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT content, system_prompt, note FROM revisions
+                 WHERE prompt_id = ?1 AND revision_number = ?2",
+                params![prompt_id, revision_number],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => AppError::NotFound("revision".into()),
+                other => AppError::Db(other),
+            })?;
+
+        (workspace_path, title, description, content, system_prompt, note)
+    };
+
+    let oid = git::commit_revision(
+        &workspace_path,
+        &prompt_id,
+        &title,
+        description.as_deref(),
+        revision_number,
+        &content,
+        system_prompt.as_deref(),
+        note.as_deref(),
+    )?;
+
+    // Record the error state — or clear it on success — so the UI can show
+    // a status dot without having to run `status` on every refresh.
+    {
+        let conn = db.lock();
+        conn.execute(
+            "UPDATE git_workspaces SET last_error = NULL WHERE path = ?1",
+            params![workspace_path],
+        )?;
+    }
+
+    Ok(oid)
 }

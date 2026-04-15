@@ -1,8 +1,10 @@
-import { useState } from "react";
-import { X, PenLine, Terminal, WifiOff, Sun, Moon, Smartphone, BookOpen, Settings as SettingsIcon, Cloud, Check, Eye, EyeOff, Key } from "lucide-react";
+import { useEffect, useState } from "react";
+import { X, PenLine, Terminal, WifiOff, Sun, Moon, Smartphone, BookOpen, Settings as SettingsIcon, Cloud, Check, Eye, EyeOff, Key, GitBranch, Plus, Trash2, FolderOpen } from "lucide-react";
 import clsx from "clsx";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import * as api from "../api";
 import { useAppStore } from "../store";
-import type { AppMode, Theme } from "../types";
+import type { AppMode, GitWorkspace, Theme } from "../types";
 import { getAllProviderConfigs, getApiKey, setApiKey, type ProviderType } from "../lib/providers";
 import { toast } from "./Toast";
 
@@ -220,6 +222,14 @@ export function SettingsModal({ onClose }: Props) {
             </div>
           </Section>
 
+          {/* Git sync (Epic 2) */}
+          <Section
+            title="Git Sync"
+            description="Mirror selected prompts to a local Git repository. Each save writes a markdown file and creates a commit. Pushing to a remote is still up to you."
+          >
+            <GitWorkspacesManager />
+          </Section>
+
           {/* About */}
           <Section title="About" description="">
             <div className="text-xs text-[var(--color-text-muted)] space-y-0.5">
@@ -400,6 +410,103 @@ function FeatureToggle({ label, hint, checked, onChange }: { label: string, hint
         />
         <div className="w-8 h-4 bg-[var(--color-border)] rounded-full peer peer-checked:bg-[var(--color-accent)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-transform peer-checked:after:translate-x-4"></div>
       </label>
+    </div>
+  );
+}
+
+function GitWorkspacesManager() {
+  const [workspaces, setWorkspaces] = useState<GitWorkspace[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  async function refresh() {
+    try {
+      const list = await api.listGitWorkspaces();
+      setWorkspaces(list);
+    } catch (e) {
+      toast(`Failed to load workspaces: ${String(e)}`, "error");
+    }
+  }
+
+  useEffect(() => { void refresh(); }, []);
+
+  async function addWorkspace() {
+    try {
+      const picked = await openDialog({
+        directory: true,
+        multiple: false,
+        title: "Choose a Git workspace folder",
+      });
+      if (!picked || typeof picked !== "string") return;
+      const name = window.prompt(
+        "Name this workspace:",
+        picked.split("/").pop() || "Workspace"
+      );
+      if (!name) return;
+      setBusy(true);
+      await api.createGitWorkspace({ name: name.trim(), path: picked });
+      await refresh();
+      toast(`Workspace "${name}" added`, "success");
+    } catch (e) {
+      toast(`Create failed: ${String(e)}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeWorkspace(w: GitWorkspace) {
+    if (!confirm(`Remove workspace "${w.name}"? Linked prompts will be unlinked but no files are deleted from disk.`)) return;
+    try {
+      await api.deleteGitWorkspace(w.id);
+      await refresh();
+      toast(`Removed "${w.name}"`, "success");
+    } catch (e) {
+      toast(`Delete failed: ${String(e)}`, "error");
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      {workspaces.length === 0 ? (
+        <div className="text-xs text-[var(--color-text-muted)] p-3 border border-dashed border-[var(--color-border)] rounded">
+          No Git workspaces yet. Add one to start mirroring prompts to disk.
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {workspaces.map((w) => (
+            <div key={w.id} className="flex items-center gap-2 p-2 rounded border border-[var(--color-border)] bg-[var(--color-bg)]">
+              <GitBranch size={12} className="text-emerald-500 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-medium truncate">{w.name}</div>
+                <div className="text-[10px] text-[var(--color-text-muted)] font-mono truncate" title={w.path}>{w.path}</div>
+                {w.last_error && (
+                  <div className="text-[9px] text-red-500 truncate" title={w.last_error}>⚠ {w.last_error}</div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => void removeWorkspace(w)}
+                className="p-1 text-[var(--color-text-muted)] hover:text-red-500 rounded hover:bg-[var(--color-bg-subtle)] shrink-0"
+                title="Remove workspace"
+              >
+                <Trash2 size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={() => void addWorkspace()}
+        disabled={busy}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-bg-subtle)] text-xs font-medium disabled:opacity-60"
+      >
+        <Plus size={11} />
+        <FolderOpen size={11} />
+        Add workspace folder…
+      </button>
+      <div className="text-[9px] text-[var(--color-text-muted)]">
+        If the folder isn't already a Git repository we'll run <code className="font-mono">git init</code> for you.
+      </div>
     </div>
   );
 }
