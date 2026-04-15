@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import clsx from "clsx";
 
-type Placement = "bottom-end" | "right-start";
+type Placement = "bottom-end" | "bottom-start" | "right-start";
 
 interface Props {
   open: boolean;
@@ -51,6 +51,9 @@ export function FloatingMenu({
       if (placement === "bottom-end") {
         top = rect.bottom + gap;
         right = Math.max(8, viewportW - rect.right);
+      } else if (placement === "bottom-start") {
+        top = rect.bottom + gap;
+        left = Math.max(8, rect.left);
       } else {
         // right-start
         top = rect.top;
