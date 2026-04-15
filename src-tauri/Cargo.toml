@@ -30,7 +30,7 @@ anyhow = "1"
 thiserror = "2"
 directories = "5"
 parking_lot = "0.12"
-rfd = "0.15"
+rfd = "0.16"
 axum = "0.8.8"
 tokio = { version = "1.51.1", features = ["full", "rt-multi-thread"] }
 # Epic 2 — Git sync. `git2` wraps libgit2 so we can init/commit/push locally
