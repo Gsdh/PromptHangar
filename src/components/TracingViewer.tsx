@@ -1,23 +1,11 @@
 import { useEffect, useState } from "react";
-import { X, Activity, Clock, Hash, DollarSign, AlertTriangle, Check, ChevronDown, ChevronRight } from "lucide-react";
+import { X, Activity, Clock, Hash, DollarSign, AlertTriangle, Check, ChevronDown, ChevronRight, ClipboardPaste } from "lucide-react";
 import clsx from "clsx";
 import * as api from "../api";
+import type { TraceRow } from "../api";
 import { useAppStore } from "../store";
 
-interface Trace {
-  id: string;
-  prompt_id: string | null;
-  revision_id: string | null;
-  provider: string;
-  model: string;
-  input_tokens: number | null;
-  output_tokens: number | null;
-  latency_ms: number | null;
-  cost_usd: number | null;
-  status: string;
-  error: string | null;
-  created_at: string;
-}
+type Trace = TraceRow;
 
 interface Props {
   onClose: () => void;
@@ -105,7 +93,28 @@ export function TracingViewer({ onClose }: Props) {
                       {expandedId === t.id ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
                     </td>
                     <td className="px-2 py-2 font-mono text-[var(--color-text-muted)]">{formatTime(t.created_at)}</td>
-                    <td className="px-2 py-2">{t.provider}</td>
+                    <td className="px-2 py-2">
+                      <div className="flex items-center gap-1.5">
+                        <span>{t.provider}</span>
+                        {t.source === "manual" && (
+                          <span
+                            title="Manual entry — user pasted this output"
+                            className="flex items-center gap-0.5 px-1 py-px rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[8px] font-bold uppercase"
+                          >
+                            <ClipboardPaste size={7} />
+                            manual
+                          </span>
+                        )}
+                        {t.source === "imported" && (
+                          <span
+                            title="Imported from elsewhere"
+                            className="px-1 py-px rounded bg-blue-500/15 text-blue-600 dark:text-blue-400 text-[8px] font-bold uppercase"
+                          >
+                            import
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-2 py-2 font-mono truncate max-w-[120px]">{t.model}</td>
                     <td className="px-2 py-2 text-right font-mono">{((t.input_tokens ?? 0) + (t.output_tokens ?? 0)).toLocaleString()}</td>
                     <td className="px-2 py-2 text-right font-mono">{t.latency_ms ? `${(t.latency_ms / 1000).toFixed(1)}s` : "—"}</td>

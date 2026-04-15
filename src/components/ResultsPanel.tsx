@@ -12,6 +12,7 @@ import {
   FileJson,
   FileText,
   Table,
+  ClipboardPaste,
 } from "lucide-react";
 import clsx from "clsx";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -19,6 +20,7 @@ import { useAppStore } from "../store";
 import { writeTextFile } from "../api";
 import type { RevisionOutput, Revision, PromptWithLatest } from "../types";
 import { FloatingMenu } from "./FloatingMenu";
+import { ManualRunModal } from "./ManualRunModal";
 import { toast } from "./Toast";
 
 function extractHtml(content: string): string | null {
@@ -46,6 +48,7 @@ export function ResultsPanel() {
   const hasUnsavedChanges = useAppStore((s) => s.hasUnsavedChanges);
   const [collapsed, setCollapsed] = useState(false);
   const [compareMode, setCompareMode] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
 
   if (!activePrompt) return null;
 
@@ -113,6 +116,15 @@ export function ResultsPanel() {
           )}
           <button
             type="button"
+            onClick={() => setManualOpen(true)}
+            className="flex items-center gap-1 px-2 py-1 text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)] rounded font-medium"
+            title="Paste a manual run (claude.ai web, ChatGPT, etc.)"
+          >
+            <ClipboardPaste size={10} />
+            Paste run
+          </button>
+          <button
+            type="button"
             onClick={handleAdd}
             className="flex items-center gap-1 px-2 py-1 bg-[var(--color-accent)] text-white rounded text-[10px] font-medium hover:brightness-110"
           >
@@ -134,7 +146,7 @@ export function ResultsPanel() {
       {!collapsed && (
         <div className="flex-1 overflow-hidden">
           {outputs.length === 0 ? (
-            <EmptyState onAdd={handleAdd} />
+            <EmptyState onAdd={handleAdd} onPaste={() => setManualOpen(true)} />
           ) : compareMode ? (
             <CompareGrid outputs={outputs} />
           ) : (
@@ -142,28 +154,41 @@ export function ResultsPanel() {
           )}
         </div>
       )}
+
+      {manualOpen && <ManualRunModal onClose={() => setManualOpen(false)} />}
     </div>
   );
 }
 
-function EmptyState({ onAdd }: { onAdd: () => void }) {
+function EmptyState({ onAdd, onPaste }: { onAdd: () => void; onPaste: () => void }) {
   return (
     <div className="px-5 py-6 text-center">
       <MessageSquare
         size={20}
         className="mx-auto mb-2 text-[var(--color-text-muted)] opacity-40"
       />
-      <div className="text-xs text-[var(--color-text-muted)] mb-2">
+      <div className="text-xs text-[var(--color-text-muted)] mb-3">
         No results yet for this revision. Paste output from an AI model
         and label it with which model/tool produced it.
       </div>
-      <button
-        type="button"
-        onClick={onAdd}
-        className="text-[11px] text-[var(--color-accent)] hover:underline"
-      >
-        + Add first result
-      </button>
+      <div className="flex items-center justify-center gap-3 text-[11px]">
+        <button
+          type="button"
+          onClick={onAdd}
+          className="text-[var(--color-accent)] hover:underline"
+        >
+          + Add first result
+        </button>
+        <span className="text-[var(--color-text-muted)]">·</span>
+        <button
+          type="button"
+          onClick={onPaste}
+          className="flex items-center gap-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+        >
+          <ClipboardPaste size={10} />
+          Paste a manual run
+        </button>
+      </div>
     </div>
   );
 }
