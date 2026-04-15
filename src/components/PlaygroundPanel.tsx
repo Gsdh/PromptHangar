@@ -46,6 +46,11 @@ export function PlaygroundPanel() {
     failed: number;
   } | null>(null);
 
+  // --- Multi-run samples (Epic 5) ---
+  // N-runs-of-the-same-model to see stochastic variance in the output. Max
+  // capped at 8 so users can't accidentally fire dozens of cloud calls.
+  const [runCount, setRunCount] = useState(1);
+
   const modelKey = (m: LLMModel) => `${m.provider}::${m.id}`;
   const selectedMulti: LLMModel[] = useMemo(
     () => models.filter((m) => selectedMultiKeys.has(modelKey(m))),
@@ -220,6 +225,62 @@ export function PlaygroundPanel() {
     }
     messages.push({ role: "user", content: draftContent });
 
+    // Multi-run (Epic 5): same model, N parallel samples sharing a run_group_id
+    // so Analytics shows them as one batch and the Results panel groups them.
+    if (runCount > 1) {
+      const runGroupId = crypto.randomUUID();
+      setFanOutProgress({ total: runCount, done: 0, failed: 0 });
+
+      const tasks = Array.from({ length: runCount }, (_, i) => i);
+      const results = await Promise.all(
+        tasks.map(async (i) => {
+          const r = await runOne({
+            model: selectedModel,
+            messages,
+            promptId,
+            revisionId,
+            runGroupId,
+            signal: controller.signal,
+            // Stream only the first run to the panel so users still see
+            // something move; the rest land silently in Results.
+            streamTo: i === 0 ? "panel" : "silent",
+          });
+          setFanOutProgress((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  done: prev.done + 1,
+                  failed: prev.failed + (r.ok ? 0 : 1),
+                }
+              : prev,
+          );
+          return r;
+        }),
+      );
+
+      setRunning(false);
+      abortRef.current = null;
+      await useAppStore.getState().refreshOutputs();
+
+      const firstOk = results.find((r) => r.ok);
+      if (firstOk) setStats(firstOk.stats);
+      const failed = results.filter((r) => !r.ok);
+      if (failed.length === results.length) {
+        setError(failed[0].error ?? "unknown error");
+        toast(`All ${failed.length} samples failed`, "error");
+      } else if (failed.length > 0) {
+        toast(
+          `${results.length - failed.length} / ${results.length} samples succeeded`,
+          "info",
+        );
+      } else {
+        toast(`${results.length} samples run`, "success");
+      }
+      setTimeout(() => setFanOutProgress(null), 2500);
+      return;
+    }
+
+    // Single-run path (default)
     const result = await runOne({
       model: selectedModel,
       messages,
@@ -465,8 +526,8 @@ export function PlaygroundPanel() {
 
         <div className="flex-1" />
 
-        {/* Stats (single-run) or fan-out progress (multi-run) */}
-        {!compareMode && stats && (
+        {/* Stats (single-run) or fan-out progress (multi-run / compare) */}
+        {!compareMode && !fanOutProgress && stats && (
           <div className="flex items-center gap-3 text-[10px] text-[var(--color-text-muted)]">
             <span className="flex items-center gap-1">
               <Clock size={9} />
@@ -478,7 +539,7 @@ export function PlaygroundPanel() {
             </span>
           </div>
         )}
-        {compareMode && fanOutProgress && (
+        {fanOutProgress && (
           <span className="flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
             <RefreshCw
               size={9}
@@ -497,6 +558,34 @@ export function PlaygroundPanel() {
           >
             ≈ {formatCost(fanOutEstimate)}
           </span>
+        )}
+
+        {/* Multi-run stepper (single-model only) — hidden in compare mode */}
+        {!compareMode && !running && (
+          <div
+            className="flex items-center border border-[var(--color-border)] rounded overflow-hidden"
+            title="Run N samples against the same model (Epic 5)"
+          >
+            <button
+              type="button"
+              onClick={() => setRunCount((n) => Math.max(1, n - 1))}
+              disabled={runCount <= 1}
+              className="px-1.5 py-1 text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40"
+            >
+              −
+            </button>
+            <span className="px-1.5 text-[10px] font-mono tabular-nums w-8 text-center">
+              ×{runCount}
+            </span>
+            <button
+              type="button"
+              onClick={() => setRunCount((n) => Math.min(8, n + 1))}
+              disabled={runCount >= 8}
+              className="px-1.5 py-1 text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40"
+            >
+              +
+            </button>
+          </div>
         )}
 
         {/* Run / Stop */}
@@ -537,7 +626,7 @@ export function PlaygroundPanel() {
             )}
           >
             <Play size={10} />
-            Run
+            {runCount > 1 ? `Run ×${runCount}` : "Run"}
           </button>
         )}
       </div>
