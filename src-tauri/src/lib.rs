@@ -124,6 +124,10 @@ pub fn run() {
             commands::delete_git_workspace,
             commands::git_workspace_status,
             commands::commit_prompt_revision,
+            // analytics (Epic 8)
+            commands::get_spend_timeseries,
+            commands::get_model_breakdown,
+            commands::export_traces_csv,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

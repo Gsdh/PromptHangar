@@ -449,3 +449,38 @@ export function commitPromptRevision(
 ): Promise<string | null> {
   return invoke("commit_prompt_revision", { promptId, revisionNumber });
 }
+
+// ---------- Analytics (Epic 8) ----------
+
+export interface SpendBucket {
+  day: string; // YYYY-MM-DD
+  cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  runs: number;
+  avg_latency_ms: number;
+}
+
+export function getSpendTimeseries(days?: number): Promise<SpendBucket[]> {
+  return invoke("get_spend_timeseries", { days: days ?? 30 });
+}
+
+export interface ModelBreakdown {
+  provider: string;
+  model: string;
+  runs: number;
+  cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  avg_latency_ms: number;
+  errors: number;
+}
+
+export function getModelBreakdown(days?: number): Promise<ModelBreakdown[]> {
+  return invoke("get_model_breakdown", { days: days ?? 30 });
+}
+
+/** Dumps the traces table to a CSV file on disk. Returns the row count. */
+export function exportTracesCsv(path: string): Promise<number> {
+  return invoke("export_traces_csv", { path });
+}

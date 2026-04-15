@@ -2145,3 +2145,197 @@ pub fn commit_prompt_revision(
 
     Ok(oid)
 }
+
+// ---------- Analytics (Epic 8) ----------
+
+/// One bucket of the daily spend/latency time-series.
+#[derive(Debug, Clone, Serialize)]
+pub struct SpendBucket {
+    /// Day in `YYYY-MM-DD` local-UTC form.
+    pub day: String,
+    pub cost_usd: f64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub runs: i64,
+    pub avg_latency_ms: i64,
+}
+
+/// Return daily rollups of cost/tokens/latency over the last `days` days.
+/// Gaps are not filled — the UI should merge by day and zero-fill missing
+/// buckets. This keeps the query simple (pure GROUP BY) without a recursive
+/// date CTE, which plays nicer with bundled SQLite.
+#[tauri::command]
+pub fn get_spend_timeseries(
+    db: State<DbPool>,
+    days: Option<i64>,
+) -> AppResult<Vec<SpendBucket>> {
+    let conn = db.lock();
+    let days = days.unwrap_or(30).max(1);
+
+    let mut stmt = conn.prepare(
+        "SELECT substr(created_at, 1, 10) AS day,
+                COALESCE(SUM(cost_usd), 0)         AS cost_usd,
+                COALESCE(SUM(input_tokens), 0)     AS input_tokens,
+                COALESCE(SUM(output_tokens), 0)    AS output_tokens,
+                COUNT(*)                           AS runs,
+                COALESCE(CAST(AVG(latency_ms) AS INTEGER), 0) AS avg_latency_ms
+         FROM traces
+         WHERE created_at >= datetime('now', '-' || ?1 || ' days')
+         GROUP BY day
+         ORDER BY day ASC",
+    )?;
+
+    let rows = stmt
+        .query_map(params![days], |r| {
+            Ok(SpendBucket {
+                day: r.get("day")?,
+                cost_usd: r.get("cost_usd")?,
+                input_tokens: r.get("input_tokens")?,
+                output_tokens: r.get("output_tokens")?,
+                runs: r.get("runs")?,
+                avg_latency_ms: r.get("avg_latency_ms")?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// Per-model roll-up: which models are eating the budget, and how do they
+/// perform on latency. Sorted by total cost descending so the top of the
+/// list in the UI is "here's your biggest line item".
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelBreakdown {
+    pub provider: String,
+    pub model: String,
+    pub runs: i64,
+    pub cost_usd: f64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub avg_latency_ms: i64,
+    /// Error count (status != 'success').
+    pub errors: i64,
+}
+
+#[tauri::command]
+pub fn get_model_breakdown(
+    db: State<DbPool>,
+    days: Option<i64>,
+) -> AppResult<Vec<ModelBreakdown>> {
+    let conn = db.lock();
+    let days = days.unwrap_or(30).max(1);
+
+    let mut stmt = conn.prepare(
+        "SELECT provider,
+                model,
+                COUNT(*)                                   AS runs,
+                COALESCE(SUM(cost_usd), 0)                 AS cost_usd,
+                COALESCE(SUM(input_tokens), 0)             AS input_tokens,
+                COALESCE(SUM(output_tokens), 0)            AS output_tokens,
+                COALESCE(CAST(AVG(latency_ms) AS INTEGER), 0) AS avg_latency_ms,
+                SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END) AS errors
+         FROM traces
+         WHERE created_at >= datetime('now', '-' || ?1 || ' days')
+         GROUP BY provider, model
+         ORDER BY cost_usd DESC, runs DESC",
+    )?;
+
+    let rows = stmt
+        .query_map(params![days], |r| {
+            Ok(ModelBreakdown {
+                provider: r.get("provider")?,
+                model: r.get("model")?,
+                runs: r.get("runs")?,
+                cost_usd: r.get("cost_usd")?,
+                input_tokens: r.get("input_tokens")?,
+                output_tokens: r.get("output_tokens")?,
+                avg_latency_ms: r.get("avg_latency_ms")?,
+                errors: r.get("errors")?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// Export traces to a CSV file on disk. Returns the number of rows written.
+/// No external csv crate — we hand-format because the schema is fixed and
+/// the field list short, so the risk of a quoting bug stays trivial.
+#[tauri::command]
+pub fn export_traces_csv(db: State<DbPool>, path: String) -> AppResult<i64> {
+    use std::io::Write;
+    let conn = db.lock();
+
+    let mut stmt = conn.prepare(
+        "SELECT created_at, provider, model, status, source, run_group_id,
+                comparison_id, comparison_side,
+                input_tokens, output_tokens, latency_ms, cost_usd,
+                prompt_id, revision_id, error
+         FROM traces
+         ORDER BY created_at ASC",
+    )?;
+
+    let mut file = std::fs::File::create(&path)?;
+    writeln!(
+        file,
+        "created_at,provider,model,status,source,run_group_id,comparison_id,comparison_side,input_tokens,output_tokens,latency_ms,cost_usd,prompt_id,revision_id,error"
+    )?;
+
+    let mut count: i64 = 0;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let created_at: String = row.get(0)?;
+        let provider: String = row.get(1)?;
+        let model: String = row.get(2)?;
+        let status: String = row.get(3)?;
+        let source: String = row.get(4)?;
+        let run_group_id: Option<String> = row.get(5)?;
+        let comparison_id: Option<String> = row.get(6)?;
+        let comparison_side: Option<String> = row.get(7)?;
+        let input_tokens: Option<i64> = row.get(8)?;
+        let output_tokens: Option<i64> = row.get(9)?;
+        let latency_ms: Option<i64> = row.get(10)?;
+        let cost_usd: Option<f64> = row.get(11)?;
+        let prompt_id: Option<String> = row.get(12)?;
+        let revision_id: Option<String> = row.get(13)?;
+        let error: Option<String> = row.get(14)?;
+
+        writeln!(
+            file,
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            csv_field(&created_at),
+            csv_field(&provider),
+            csv_field(&model),
+            csv_field(&status),
+            csv_field(&source),
+            csv_opt(&run_group_id),
+            csv_opt(&comparison_id),
+            csv_opt(&comparison_side),
+            input_tokens.map(|v| v.to_string()).unwrap_or_default(),
+            output_tokens.map(|v| v.to_string()).unwrap_or_default(),
+            latency_ms.map(|v| v.to_string()).unwrap_or_default(),
+            cost_usd.map(|v| format!("{:.6}", v)).unwrap_or_default(),
+            csv_opt(&prompt_id),
+            csv_opt(&revision_id),
+            csv_opt(&error),
+        )?;
+        count += 1;
+    }
+    file.flush()?;
+    Ok(count)
+}
+
+/// Escape a CSV field: wrap in quotes and double internal quotes if the
+/// value contains a comma, quote, or newline.
+fn csv_field(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+fn csv_opt(s: &Option<String>) -> String {
+    match s {
+        Some(v) => csv_field(v),
+        None => String::new(),
+    }
+}
