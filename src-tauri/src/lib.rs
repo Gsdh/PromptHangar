@@ -128,6 +128,9 @@ pub fn run() {
             commands::get_spend_timeseries,
             commands::get_model_breakdown,
             commands::export_traces_csv,
+            // bundles (Epic 9)
+            commands::export_prompt_bundle,
+            commands::import_prompt_bundle,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

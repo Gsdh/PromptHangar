@@ -484,3 +484,36 @@ export function getModelBreakdown(days?: number): Promise<ModelBreakdown[]> {
 export function exportTracesCsv(path: string): Promise<number> {
   return invoke("export_traces_csv", { path });
 }
+
+// ---------- Bundles (Epic 9) ----------
+
+/**
+ * Write a .phpkg bundle (JSON) containing one or more prompts with their
+ * revisions, outputs, tags, and trace metadata. Returns the number of
+ * prompts exported. When `include_trace_bodies` is true the bundle also
+ * carries raw input_messages + output for every trace (privacy trade-off).
+ */
+export function exportPromptBundle(input: {
+  prompt_ids: string[];
+  path: string;
+  include_trace_bodies?: boolean;
+}): Promise<number> {
+  return invoke("export_prompt_bundle", { input });
+}
+
+export interface ImportBundleResult {
+  prompt_count: number;
+  revision_count: number;
+  output_count: number;
+  trace_count: number;
+  new_prompt_ids: string[];
+}
+
+/** Read a .phpkg bundle from `path` and insert its prompts under `folder_id`. */
+export function importPromptBundle(input: {
+  path: string;
+  folder_id?: string | null;
+  prefix_title?: boolean;
+}): Promise<ImportBundleResult> {
+  return invoke("import_prompt_bundle", { input });
+}

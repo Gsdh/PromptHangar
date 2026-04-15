@@ -2339,3 +2339,478 @@ fn csv_opt(s: &Option<String>) -> String {
         None => String::new(),
     }
 }
+
+// ---------- Bundles (Epic 9) ----------
+//
+// Shareable snapshot format ".phpkg" — a plain JSON file carrying one or
+// more prompts with their revisions, outputs, tags, and trace metadata.
+// Designed so a colleague can open the file in their own PromptHangar
+// install and see the same revisions, results, and aggregate stats.
+//
+// We deliberately omit raw `input_messages` / `output` trace bodies by
+// default to avoid accidentally leaking conversational content that wasn't
+// intended to leave the machine — the user opts in per-export via the
+// `include_trace_bodies` flag. Revision outputs (the user's recorded
+// results) are always included because those ARE the deliverable.
+
+const BUNDLE_FORMAT: &str = "prompthangar.bundle";
+const BUNDLE_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Deserialize)]
+pub struct ExportBundleInput {
+    pub prompt_ids: Vec<String>,
+    pub path: String,
+    /// When true, include raw `input_messages` + `output` columns on trace
+    /// rows. Default false — trace metadata (cost / latency / tokens) still
+    /// goes in either way.
+    #[serde(default)]
+    pub include_trace_bodies: bool,
+}
+
+#[tauri::command]
+pub fn export_prompt_bundle(
+    db: State<DbPool>,
+    input: ExportBundleInput,
+) -> AppResult<i64> {
+    if input.prompt_ids.is_empty() {
+        return Err(AppError::Invalid("pick at least one prompt to export".into()));
+    }
+    let conn = db.lock();
+
+    let mut bundles: Vec<serde_json::Value> = Vec::with_capacity(input.prompt_ids.len());
+
+    for prompt_id in &input.prompt_ids {
+        // Prompt meta
+        let prompt: Prompt = conn
+            .query_row(
+                "SELECT id, folder_id, title, description, created_at, updated_at,
+                        view_prefs, git_workspace_id,
+                        baseline_revision_id, champion_revision_id
+                 FROM prompts WHERE id = ?1",
+                params![prompt_id],
+                row_to_prompt,
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => AppError::NotFound(format!("prompt {prompt_id}")),
+                other => AppError::Db(other),
+            })?;
+
+        // Tags
+        let tags = load_tags(&conn, prompt_id)?;
+
+        // Revisions + per-revision outputs
+        let mut rev_stmt = conn.prepare(
+            "SELECT id, prompt_id, revision_number, content, system_prompt, model,
+                    params, note, flagged, rating, created_at
+             FROM revisions WHERE prompt_id = ?1 ORDER BY revision_number ASC",
+        )?;
+        let revisions: Vec<Revision> = rev_stmt
+            .query_map(params![prompt_id], row_to_revision)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let mut rev_json: Vec<serde_json::Value> = Vec::with_capacity(revisions.len());
+        for rev in &revisions {
+            let mut out_stmt = conn.prepare(
+                "SELECT id, revision_id, label, content, notes, rating, sort_order, created_at,
+                        run_group_id
+                 FROM revision_outputs WHERE revision_id = ?1 ORDER BY sort_order ASC, created_at ASC",
+            )?;
+            let outputs: Vec<RevisionOutput> = out_stmt
+                .query_map(params![rev.id], |row| {
+                    Ok(RevisionOutput {
+                        id: row.get("id")?,
+                        revision_id: row.get("revision_id")?,
+                        label: row.get("label")?,
+                        content: row.get("content")?,
+                        notes: row.get("notes")?,
+                        rating: row.get("rating")?,
+                        sort_order: row.get("sort_order")?,
+                        created_at: parse_dt(row.get::<_, String>("created_at")?)
+                            .unwrap_or_else(|_| Utc::now()),
+                        run_group_id: row.get::<_, Option<String>>("run_group_id").ok().flatten(),
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+
+            rev_json.push(serde_json::json!({
+                "revision_number": rev.revision_number,
+                "content": rev.content,
+                "system_prompt": rev.system_prompt,
+                "model": rev.model,
+                "params": rev.params,
+                "note": rev.note,
+                "flagged": rev.flagged,
+                "rating": rev.rating,
+                "created_at": rev.created_at.to_rfc3339(),
+                "outputs": outputs.iter().map(|o| serde_json::json!({
+                    "label": o.label,
+                    "content": o.content,
+                    "notes": o.notes,
+                    "rating": o.rating,
+                    "run_group_id": o.run_group_id,
+                    "created_at": o.created_at.to_rfc3339(),
+                })).collect::<Vec<_>>(),
+            }));
+        }
+
+        // Traces — metadata only, optionally with bodies
+        let mut trace_stmt = conn.prepare(
+            "SELECT id, prompt_id, revision_id, provider, model, input_tokens, output_tokens,
+                    latency_ms, cost_usd, status, error, created_at, run_group_id, source,
+                    comparison_id, comparison_side, input_messages, output
+             FROM traces WHERE prompt_id = ?1 ORDER BY created_at ASC",
+        )?;
+        let traces: Vec<serde_json::Value> = trace_stmt
+            .query_map(params![prompt_id], |row| {
+                let mut json = serde_json::json!({
+                    "provider":        row.get::<_, String>("provider")?,
+                    "model":           row.get::<_, String>("model")?,
+                    "input_tokens":    row.get::<_, Option<i64>>("input_tokens")?,
+                    "output_tokens":   row.get::<_, Option<i64>>("output_tokens")?,
+                    "latency_ms":      row.get::<_, Option<i64>>("latency_ms")?,
+                    "cost_usd":        row.get::<_, Option<f64>>("cost_usd")?,
+                    "status":          row.get::<_, String>("status")?,
+                    "error":           row.get::<_, Option<String>>("error")?,
+                    "created_at":      row.get::<_, String>("created_at")?,
+                    "run_group_id":    row.get::<_, Option<String>>("run_group_id")?,
+                    "source":          row.get::<_, String>("source")?,
+                    "comparison_id":   row.get::<_, Option<String>>("comparison_id")?,
+                    "comparison_side": row.get::<_, Option<String>>("comparison_side")?,
+                });
+                if input.include_trace_bodies {
+                    let input_messages: String = row.get("input_messages")?;
+                    let output: String = row.get("output")?;
+                    json["input_messages"] = serde_json::Value::String(input_messages);
+                    json["output"] = serde_json::Value::String(output);
+                }
+                Ok(json)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        bundles.push(serde_json::json!({
+            "title": prompt.title,
+            "description": prompt.description,
+            "tags": tags,
+            "view_prefs": prompt.view_prefs,
+            "baseline_revision_number": baseline_revision_number(&conn, &prompt)?,
+            "champion_revision_number": champion_revision_number(&conn, &prompt)?,
+            "revisions": rev_json,
+            "traces": traces,
+        }));
+    }
+
+    let doc = serde_json::json!({
+        "format": BUNDLE_FORMAT,
+        "schema_version": BUNDLE_SCHEMA_VERSION,
+        "exported_at": now_string(),
+        "exported_by": format!("PromptHangar {}", env!("CARGO_PKG_VERSION")),
+        "include_trace_bodies": input.include_trace_bodies,
+        "prompts": bundles,
+    });
+
+    let serialized = serde_json::to_string_pretty(&doc)?;
+    std::fs::write(&input.path, serialized)?;
+    Ok(input.prompt_ids.len() as i64)
+}
+
+/// Look up the revision_number for the currently-pinned baseline, if any.
+/// We serialise the _number_ rather than the UUID so the baseline/champion
+/// pointer still makes sense after import.
+fn baseline_revision_number(
+    conn: &rusqlite::Connection,
+    prompt: &Prompt,
+) -> AppResult<Option<i64>> {
+    let Some(id) = &prompt.baseline_revision_id else { return Ok(None) };
+    let n: rusqlite::Result<i64> = conn.query_row(
+        "SELECT revision_number FROM revisions WHERE id = ?1",
+        params![id],
+        |r| r.get(0),
+    );
+    match n {
+        Ok(v) => Ok(Some(v)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(AppError::Db(e)),
+    }
+}
+
+fn champion_revision_number(
+    conn: &rusqlite::Connection,
+    prompt: &Prompt,
+) -> AppResult<Option<i64>> {
+    let Some(id) = &prompt.champion_revision_id else { return Ok(None) };
+    let n: rusqlite::Result<i64> = conn.query_row(
+        "SELECT revision_number FROM revisions WHERE id = ?1",
+        params![id],
+        |r| r.get(0),
+    );
+    match n {
+        Ok(v) => Ok(Some(v)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(AppError::Db(e)),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImportBundleInput {
+    pub path: String,
+    /// Target folder id. `None` → keep prompts folder-less (shows under "All").
+    #[serde(default)]
+    pub folder_id: Option<String>,
+    /// When true, every imported prompt title is prefixed with "(imported)"
+    /// so it's obvious they came from outside. Default true.
+    #[serde(default = "default_prefix_imported")]
+    pub prefix_title: bool,
+}
+
+fn default_prefix_imported() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportBundleResult {
+    pub prompt_count: i64,
+    pub revision_count: i64,
+    pub output_count: i64,
+    pub trace_count: i64,
+    /// Ids of the newly-created prompts, so the UI can jump to the first one.
+    pub new_prompt_ids: Vec<String>,
+}
+
+#[tauri::command]
+pub fn import_prompt_bundle(
+    db: State<DbPool>,
+    input: ImportBundleInput,
+) -> AppResult<ImportBundleResult> {
+    let raw = std::fs::read_to_string(&input.path)?;
+    let doc: serde_json::Value = serde_json::from_str(&raw)?;
+
+    // Header validation — reject anything that isn't our format.
+    let format = doc.get("format").and_then(|v| v.as_str()).unwrap_or("");
+    if format != BUNDLE_FORMAT {
+        return Err(AppError::Invalid(format!(
+            "not a PromptHangar bundle (format='{format}')"
+        )));
+    }
+    let schema = doc.get("schema_version").and_then(|v| v.as_u64()).unwrap_or(0);
+    if schema == 0 || schema > BUNDLE_SCHEMA_VERSION as u64 {
+        return Err(AppError::Invalid(format!(
+            "unsupported schema_version={schema}; this app supports up to {}",
+            BUNDLE_SCHEMA_VERSION
+        )));
+    }
+
+    let prompts = doc
+        .get("prompts")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| AppError::Invalid("bundle missing 'prompts' array".into()))?;
+
+    let mut conn = db.lock();
+    let tx = conn.transaction()?;
+
+    let mut result = ImportBundleResult {
+        prompt_count: 0,
+        revision_count: 0,
+        output_count: 0,
+        trace_count: 0,
+        new_prompt_ids: Vec::new(),
+    };
+
+    for p in prompts {
+        let now = now_string();
+        let new_prompt_id = Uuid::new_v4().to_string();
+        let raw_title = p.get("title").and_then(|v| v.as_str()).unwrap_or("(untitled)");
+        let title = if input.prefix_title {
+            format!("(imported) {raw_title}")
+        } else {
+            raw_title.to_string()
+        };
+        let description = p.get("description").and_then(|v| v.as_str());
+        let view_prefs = p.get("view_prefs").map(|v| v.to_string());
+
+        tx.execute(
+            "INSERT INTO prompts (id, folder_id, title, description, sort_order, created_at, updated_at, view_prefs)
+             VALUES (?1, ?2, ?3, ?4, 0, ?5, ?5, ?6)",
+            params![
+                new_prompt_id,
+                input.folder_id,
+                title,
+                description,
+                now,
+                view_prefs,
+            ],
+        )?;
+
+        // Tags
+        if let Some(tags) = p.get("tags").and_then(|v| v.as_array()) {
+            for t in tags {
+                if let Some(s) = t.as_str() {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO prompt_tags (prompt_id, tag) VALUES (?1, ?2)",
+                        params![new_prompt_id, s],
+                    )?;
+                }
+            }
+        }
+
+        // Revisions — preserve revision_number, fresh UUIDs, map number→id for FK resolution
+        let mut number_to_id: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
+
+        if let Some(revisions) = p.get("revisions").and_then(|v| v.as_array()) {
+            for rev in revisions {
+                let rev_id = Uuid::new_v4().to_string();
+                let rev_num = rev
+                    .get("revision_number")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(1);
+                let content = rev.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                let system_prompt = rev.get("system_prompt").and_then(|v| v.as_str());
+                let model = rev.get("model").and_then(|v| v.as_str());
+                let params_json = rev
+                    .get("params")
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "{}".to_string());
+                let note = rev.get("note").and_then(|v| v.as_str());
+                let flagged = rev.get("flagged").and_then(|v| v.as_bool()).unwrap_or(false);
+                let rating = rev.get("rating").and_then(|v| v.as_i64());
+                let created_at = rev
+                    .get("created_at")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&now)
+                    .to_string();
+
+                tx.execute(
+                    "INSERT INTO revisions (id, prompt_id, revision_number, content, system_prompt,
+                                            model, params, note, flagged, rating, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    params![
+                        rev_id,
+                        new_prompt_id,
+                        rev_num,
+                        content,
+                        system_prompt,
+                        model,
+                        params_json,
+                        note,
+                        if flagged { 1 } else { 0 },
+                        rating,
+                        created_at,
+                    ],
+                )?;
+                number_to_id.insert(rev_num, rev_id.clone());
+                result.revision_count += 1;
+
+                // Outputs for this revision
+                if let Some(outputs) = rev.get("outputs").and_then(|v| v.as_array()) {
+                    for (idx, out) in outputs.iter().enumerate() {
+                        let out_id = Uuid::new_v4().to_string();
+                        let label = out.get("label").and_then(|v| v.as_str());
+                        let o_content = out.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                        let notes = out.get("notes").and_then(|v| v.as_str());
+                        let o_rating = out.get("rating").and_then(|v| v.as_i64());
+                        let o_created = out
+                            .get("created_at")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&now)
+                            .to_string();
+                        let run_group = out.get("run_group_id").and_then(|v| v.as_str());
+                        tx.execute(
+                            "INSERT INTO revision_outputs (id, revision_id, label, content, notes, rating, sort_order, created_at, run_group_id)
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                            params![
+                                out_id,
+                                rev_id,
+                                label,
+                                o_content,
+                                notes,
+                                o_rating,
+                                idx as i64,
+                                o_created,
+                                run_group,
+                            ],
+                        )?;
+                        result.output_count += 1;
+                    }
+                }
+            }
+        }
+
+        // Baseline / champion pointers — look up by revision_number.
+        if let Some(n) = p.get("baseline_revision_number").and_then(|v| v.as_i64()) {
+            if let Some(id) = number_to_id.get(&n) {
+                tx.execute(
+                    "UPDATE prompts SET baseline_revision_id = ?1 WHERE id = ?2",
+                    params![id, new_prompt_id],
+                )?;
+            }
+        }
+        if let Some(n) = p.get("champion_revision_number").and_then(|v| v.as_i64()) {
+            if let Some(id) = number_to_id.get(&n) {
+                tx.execute(
+                    "UPDATE prompts SET champion_revision_id = ?1 WHERE id = ?2",
+                    params![id, new_prompt_id],
+                )?;
+            }
+        }
+
+        // Traces — only include if we can stamp a revision_id (we don't
+        // have the original one, so match nothing and insert NULL). Trace
+        // bodies (input_messages, output) may be absent depending on the
+        // exporter's choice; default to empty strings.
+        if let Some(traces) = p.get("traces").and_then(|v| v.as_array()) {
+            for t in traces {
+                let trace_id = Uuid::new_v4().to_string();
+                let provider = t.get("provider").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let model = t.get("model").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("success");
+                let source = t.get("source").and_then(|v| v.as_str()).unwrap_or("imported");
+                let input_tokens = t.get("input_tokens").and_then(|v| v.as_i64());
+                let output_tokens = t.get("output_tokens").and_then(|v| v.as_i64());
+                let latency_ms = t.get("latency_ms").and_then(|v| v.as_i64());
+                let cost_usd = t.get("cost_usd").and_then(|v| v.as_f64());
+                let error = t.get("error").and_then(|v| v.as_str());
+                let created_at = t
+                    .get("created_at")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&now)
+                    .to_string();
+                let run_group_id = t.get("run_group_id").and_then(|v| v.as_str());
+                let input_messages = t.get("input_messages").and_then(|v| v.as_str()).unwrap_or("");
+                let output = t.get("output").and_then(|v| v.as_str()).unwrap_or("");
+
+                tx.execute(
+                    "INSERT INTO traces (id, prompt_id, revision_id, provider, model,
+                                         input_messages, output, input_tokens, output_tokens,
+                                         latency_ms, cost_usd, status, error, created_at,
+                                         run_group_id, source)
+                     VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                    params![
+                        trace_id,
+                        new_prompt_id,
+                        provider,
+                        model,
+                        input_messages,
+                        output,
+                        input_tokens,
+                        output_tokens,
+                        latency_ms,
+                        cost_usd,
+                        status,
+                        error,
+                        created_at,
+                        run_group_id,
+                        source,
+                    ],
+                )?;
+                result.trace_count += 1;
+            }
+        }
+
+        // FTS
+        update_fts(&tx, &new_prompt_id)?;
+        result.new_prompt_ids.push(new_prompt_id);
+        result.prompt_count += 1;
+    }
+
+    tx.commit()?;
+    Ok(result)
+}

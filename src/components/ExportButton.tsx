@@ -1,27 +1,32 @@
 import { useRef, useState } from "react";
-import { Download, FileJson, FileText, Check } from "lucide-react";
+import { Download, FileJson, FileText, Check, Package } from "lucide-react";
 import { toast } from "./Toast";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../store";
-import { exportPromptToFile } from "../api";
+import { exportPromptToFile, exportPromptBundle } from "../api";
 import { FloatingMenu } from "./FloatingMenu";
 
 export function ExportButton() {
   const activePrompt = useAppStore((s) => s.activePrompt);
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<"idle" | "saving" | "done">("idle");
+  const [includeBodies, setIncludeBodies] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
 
   if (!activePrompt) return null;
 
-  async function doExport(format: "json" | "markdown") {
-    if (!activePrompt) return;
-    const ext = format === "json" ? "json" : "md";
-    const sanitized = activePrompt.prompt.title
+  function sanitizedName(ext: string): string {
+    const base = activePrompt!.prompt.title
       .replace(/[^a-zA-Z0-9_\-\s]/g, "")
       .replace(/\s+/g, "_")
       .slice(0, 48);
-    const defaultName = `${sanitized}.${ext}`;
+    return `${base || "prompt"}.${ext}`;
+  }
+
+  async function doExport(format: "json" | "markdown") {
+    if (!activePrompt) return;
+    const ext = format === "json" ? "json" : "md";
+    const defaultName = sanitizedName(ext);
 
     try {
       const path = await save({
@@ -46,6 +51,35 @@ export function ExportButton() {
     } catch (err) {
       setStatus("idle");
       toast("Export failed: " + String(err), "error");
+    }
+  }
+
+  async function doExportBundle() {
+    if (!activePrompt) return;
+    const defaultName = sanitizedName("phpkg");
+    try {
+      const path = await save({
+        defaultPath: defaultName,
+        filters: [{ name: "PromptHangar bundle", extensions: ["phpkg", "json"] }],
+      });
+      if (!path) return;
+
+      setStatus("saving");
+      setOpen(false);
+      const count = await exportPromptBundle({
+        prompt_ids: [activePrompt.prompt.id],
+        path,
+        include_trace_bodies: includeBodies,
+      });
+      setStatus("done");
+      toast(
+        `Bundle exported (${count} prompt${count === 1 ? "" : "s"})${includeBodies ? " · with trace bodies" : ""}`,
+        "success",
+      );
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch (err) {
+      setStatus("idle");
+      toast("Bundle export failed: " + String(err), "error");
     }
   }
 
@@ -99,6 +133,34 @@ export function ExportButton() {
             </div>
           </div>
         </button>
+
+        <div className="border-t border-[var(--color-border)] my-1" />
+
+        <button
+          type="button"
+          onClick={() => void doExportBundle()}
+          className="w-full text-left px-3 py-1.5 flex items-center gap-2 text-xs hover:bg-[var(--color-bg-subtle)]"
+        >
+          <Package size={12} className="text-[var(--color-accent)]" />
+          <div>
+            <div className="font-medium">Share bundle (.phpkg)</div>
+            <div className="text-[10px] text-[var(--color-text-muted)]">
+              Revisions + outputs + trace stats — importable by anyone
+            </div>
+          </div>
+        </button>
+        <label
+          className="px-3 py-1.5 flex items-center gap-2 text-[10px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] cursor-pointer"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={includeBodies}
+            onChange={(e) => setIncludeBodies(e.target.checked)}
+            className="accent-[var(--color-accent)]"
+          />
+          <span>Include trace bodies (raw inputs + outputs)</span>
+        </label>
       </FloatingMenu>
     </>
   );

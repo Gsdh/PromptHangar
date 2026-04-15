@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import clsx from "clsx";
-import { Settings as SettingsIcon, BookOpen, Download, BarChart3, Lock, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Link2, FlaskConical, Activity, HelpCircle, History } from "lucide-react";
+import { Settings as SettingsIcon, BookOpen, Download, BarChart3, Lock, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Link2, FlaskConical, Activity, HelpCircle, History, Package } from "lucide-react";
 import { useAppStore } from "./store";
+import * as api from "./api";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { toast } from "./components/Toast";
 import { FolderTree } from "./components/FolderTree";
 import { DndPromptList } from "./components/DndPromptList";
 import { PromptEditor } from "./components/PromptEditor";
@@ -302,6 +305,36 @@ function App() {
           >
             <Download size={12} />
             <span>Import</span>
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const picked = await openDialog({
+                  multiple: false,
+                  filters: [{ name: "PromptHangar bundle", extensions: ["phpkg", "json"] }],
+                });
+                if (!picked || typeof picked !== "string") return;
+                const result = await api.importPromptBundle({
+                  path: picked,
+                  folder_id: selectedFolderId ?? null,
+                });
+                toast(
+                  `Imported ${result.prompt_count} prompt${result.prompt_count === 1 ? "" : "s"} · ${result.revision_count} revisions · ${result.output_count} outputs`,
+                  "success",
+                );
+                await useAppStore.getState().refreshPrompts();
+                if (result.new_prompt_ids[0]) {
+                  await useAppStore.getState().selectPrompt(result.new_prompt_ids[0]);
+                }
+              } catch (e) {
+                toast(`Bundle import failed: ${String(e)}`, "error");
+              }
+            }}
+            className="p-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] rounded hover:bg-[var(--color-bg-subtle)]"
+            title="Load a .phpkg bundle from another PromptHangar user"
+          >
+            <Package size={14} />
           </button>
           <button type="button" onClick={() => setChainsOpen(true)} className="p-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] rounded hover:bg-[var(--color-bg-subtle)]" title="Prompt Chains">
             <Link2 size={14} />
