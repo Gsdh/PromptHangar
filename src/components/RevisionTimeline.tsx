@@ -14,12 +14,19 @@ import {
   TrendingUp,
   TrendingDown,
   Minus,
+  Palette,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import * as api from "../api";
 import { FloatingMenu } from "./FloatingMenu";
 import { toast } from "./Toast";
-import type { Revision } from "../types";
+import {
+  COLOR_BY_LABELS,
+  revisionTint,
+  type ColorBy,
+  type RevisionTint,
+} from "../lib/revisionColors";
+import type { PromptViewPrefs, Revision } from "../types";
 
 export function RevisionTimeline() {
   const revisions = useAppStore((s) => s.revisions);
@@ -28,6 +35,7 @@ export function RevisionTimeline() {
   const activePrompt = useAppStore((s) => s.activePrompt);
   const mode = useAppStore((s) => s.settings?.mode ?? "basic");
   const updateRevisionMeta = useAppStore((s) => s.updateRevisionMeta);
+  const updateViewPrefs = useAppStore((s) => s.updateViewPrefs);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [filterFlagged, setFilterFlagged] = useState(false);
@@ -36,6 +44,15 @@ export function RevisionTimeline() {
   const [activeBranch, setActiveBranch] = useState("main");
   const [environments, setEnvironments] = useState<{ env_name: string; revision_id: string; revision_number: number; promoted_at: string }[]>([]);
   const [evalScores, setEvalScores] = useState<Record<string, number>>({});
+  const [colorMenuOpen, setColorMenuOpen] = useState(false);
+  const colorMenuBtnRef = useRef<HTMLButtonElement>(null);
+
+  // Read the colour-by preference from the active prompt's view_prefs.
+  // Persist in v0.2 moved this state server-side so it survives reloads and
+  // follows the prompt across workspaces.
+  const colorBy: ColorBy =
+    ((activePrompt?.prompt.view_prefs as PromptViewPrefs | null | undefined)
+      ?.colorBy as ColorBy | undefined) ?? "none";
 
   // Load branches, environments, and eval scores
   useEffect(() => {
@@ -138,6 +155,72 @@ export function RevisionTimeline() {
           </span>
           <div className="flex items-center gap-0.5">
             <button
+              ref={colorMenuBtnRef}
+              type="button"
+              onClick={() => setColorMenuOpen((o) => !o)}
+              className={clsx(
+                "p-1 rounded transition-colors",
+                colorBy !== "none"
+                  ? "text-[var(--color-accent)] bg-[var(--color-accent)]/10"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)]"
+              )}
+              title={
+                colorBy === "none"
+                  ? "Colour revisions by…"
+                  : `Colouring by ${COLOR_BY_LABELS[colorBy].toLowerCase()}`
+              }
+            >
+              <Palette size={11} />
+            </button>
+            <FloatingMenu
+              open={colorMenuOpen}
+              anchorRef={colorMenuBtnRef}
+              placement="bottom-end"
+              onClose={() => setColorMenuOpen(false)}
+              className="py-1 min-w-[150px]"
+            >
+              {(["rating", "model", "flagged", "none"] as ColorBy[]).map((opt) => (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => {
+                    void updateViewPrefs({ colorBy: opt });
+                    setColorMenuOpen(false);
+                  }}
+                  className={clsx(
+                    "w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--color-bg-subtle)] flex items-center gap-2",
+                    opt === colorBy && "text-[var(--color-accent)] font-semibold",
+                  )}
+                >
+                  {opt === "rating" && (
+                    <span
+                      aria-hidden
+                      className="w-2 h-2 rounded-full"
+                      style={{
+                        background:
+                          "linear-gradient(90deg, hsl(0 70% 50%), hsl(40 70% 50%), hsl(140 70% 50%))",
+                      }}
+                    />
+                  )}
+                  {opt === "model" && (
+                    <span
+                      aria-hidden
+                      className="w-2 h-2 rounded-full"
+                      style={{
+                        background:
+                          "conic-gradient(hsl(0 60% 55%), hsl(120 60% 55%), hsl(240 60% 55%), hsl(0 60% 55%))",
+                      }}
+                    />
+                  )}
+                  {opt === "flagged" && (
+                    <Star size={9} className="fill-amber-400 text-amber-400" />
+                  )}
+                  {opt === "none" && <X size={9} className="text-[var(--color-text-muted)]" />}
+                  <span>{COLOR_BY_LABELS[opt]}</span>
+                </button>
+              ))}
+            </FloatingMenu>
+            <button
               type="button"
               onClick={() => setFilterFlagged((f) => !f)}
               className={clsx(
@@ -221,6 +304,7 @@ export function RevisionTimeline() {
             {group.revisions.map((rev) => {
               const isCurrent = rev.id === currentViewing;
               const isLatest = rev.id === latestId;
+              const tint = revisionTint(rev, colorBy, evalScores[rev.id]);
               return (
                 <RevisionItem
                   key={rev.id}
@@ -228,6 +312,7 @@ export function RevisionTimeline() {
                   isCurrent={isCurrent}
                   isLatest={isLatest}
                   mode={mode}
+                  tint={tint}
                   evalScore={evalScores[rev.id]}
                   prevEvalScore={(() => {
                     const idx = filtered.indexOf(rev);
@@ -284,6 +369,7 @@ function RevisionItem({
   isCurrent,
   isLatest,
   mode,
+  tint,
   evalScore,
   prevEvalScore,
   envLabel,
@@ -297,6 +383,7 @@ function RevisionItem({
   isCurrent: boolean;
   isLatest: boolean;
   mode: string;
+  tint: RevisionTint | null;
   evalScore?: number;
   prevEvalScore?: number;
   envLabel?: string;
@@ -316,12 +403,23 @@ function RevisionItem({
     setEditingNote(false);
   }
 
+  // Selection highlight still wins over the tint — we layer the tint
+  // underneath via `backgroundColor` and the 3px left border sits on top.
+  const tintStyle: React.CSSProperties | undefined = tint
+    ? {
+        backgroundColor: isCurrent ? undefined : tint.bg,
+        boxShadow: `inset 3px 0 0 0 ${tint.border}`,
+      }
+    : undefined;
+
   return (
     <div
       className={clsx(
         "group border-b border-[var(--color-border)]",
         isCurrent && "bg-[var(--color-bg-subtle)]"
       )}
+      style={tintStyle}
+      title={tint?.label}
     >
       <div
         role="button"

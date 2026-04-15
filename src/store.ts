@@ -6,6 +6,7 @@ import { toast } from "./components/Toast";
 import type {
   AppSettings,
   Folder,
+  PromptViewPrefs,
   PromptWithLatest,
   Revision,
   RevisionOutput,
@@ -53,7 +54,11 @@ interface AppStore {
     title?: string;
     description?: string;
     folder_id?: string;
+    view_prefs?: PromptViewPrefs;
+    git_workspace_id?: string | null;
   }) => Promise<void>;
+  /** Merge-patch view_prefs on the active prompt; optimistic + persisted. */
+  updateViewPrefs: (patch: Partial<PromptViewPrefs>) => Promise<void>;
   setPromptTags: (promptId: string, tags: string[]) => Promise<void>;
   deletePrompt: (id: string) => Promise<void>;
 
@@ -229,6 +234,26 @@ export const useAppStore = create<AppStore>((set, get) => ({
     // If the updated prompt is the active one, refresh its details
     if (get().selectedPromptId === patch.id) {
       const active = await api.getPrompt(patch.id);
+      set({ activePrompt: active });
+    }
+  },
+  async updateViewPrefs(patch) {
+    const active = get().activePrompt;
+    if (!active) return;
+    const current = (active.prompt.view_prefs ?? {}) as PromptViewPrefs;
+    const next: PromptViewPrefs = { ...current, ...patch };
+    // Optimistic: paint the new colour immediately so UX stays snappy.
+    set({
+      activePrompt: {
+        ...active,
+        prompt: { ...active.prompt, view_prefs: next },
+      },
+    });
+    try {
+      await api.updatePrompt({ id: active.prompt.id, view_prefs: next });
+    } catch (err) {
+      console.error("updateViewPrefs failed", err);
+      // Roll back to the previous value if persist failed.
       set({ activePrompt: active });
     }
   },
