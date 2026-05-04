@@ -20,7 +20,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-clipboard-manager": "^2",
-    "@tauri-apps/plugin-dialog": "^2.7.0",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-opener": "^2",
     "@uiw/react-codemirror": "^4.23.7",
     "clsx": "^2.1.1",
